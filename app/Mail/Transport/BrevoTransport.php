@@ -73,10 +73,11 @@ class BrevoTransport extends AbstractTransport
 
         if ($replyToList = $email->getReplyTo()) {
             $replyTo = $replyToList[0];
-            $payload['replyTo'] = [
-                'email' => $replyTo->getAddress(),
-                'name' => $replyTo->getName() !== '' ? $replyTo->getName() : null,
-            ];
+            $payload['replyTo'] = ['email' => $replyTo->getAddress()];
+
+            if ($replyTo->getName() !== '') {
+                $payload['replyTo']['name'] = $replyTo->getName();
+            }
         }
 
         if ($html = $email->getHtmlBody()) {
@@ -97,10 +98,13 @@ class BrevoTransport extends AbstractTransport
     private function formatAddresses(array $addresses): array
     {
         return array_map(static function (Address $address): array {
-            return [
-                'email' => $address->getAddress(),
-                'name' => $address->getName(),
-            ];
+            $entry = ['email' => $address->getAddress()];
+
+            if ($address->getName() !== '') {
+                $entry['name'] = $address->getName();
+            }
+
+            return $entry;
         }, $addresses);
     }
 
