@@ -358,7 +358,9 @@ class Dashboard extends Component
 
         CopyTradeJob::clearAllPatternConsumed($setting->master_connection_id);
         Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
-        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
+
+        $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
+        Redis::setex("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id(), 86400, $currentCount);
 
         MasterListenerJob::dispatch($setting->master_connection_id);
 
@@ -376,6 +378,9 @@ class Dashboard extends Component
         $setting->update(['is_running' => false]);
 
         Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
+
+        $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
+        Redis::setex("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id(), 86400, $currentCount);
     }
 
     public function pauseBot(): void
