@@ -120,7 +120,8 @@
       "Bash(grep -n 'fill\\\\|$validated\\\\|update\\\\|save' /c/Users/EMILY/Documents/sites/trader/resources/views/pages/settings/⚡profile.blade.php)",
       "Skill(fluxui-development)",
       "mcp__playwright__browser_navigate",
-      "mcp__playwright__browser_evaluate"
+      "mcp__playwright__browser_evaluate",
+      "Bash(grep *)"
     ]
   },
   "enableAllProjectMcpServers": true,

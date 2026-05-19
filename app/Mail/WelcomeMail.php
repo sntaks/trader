@@ -14,7 +14,10 @@ class WelcomeMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
-    public function __construct(public User $user) {}
+    public function __construct(public User $user)
+    {
+        $this->onQueue('mail');
+    }
 
     public function envelope(): Envelope
     {
@@ -27,6 +30,7 @@ class WelcomeMail extends Mailable implements ShouldQueue
     {
         return new Content(
             view: 'mail.welcome',
+            text: 'mail.welcome-plain',
         );
     }
 }
