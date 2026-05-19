@@ -42,13 +42,20 @@
     x.parentNode.insertBefore(s, x);
 </script>
 
-{{-- Move WATI's send button off-screen — keeps it interactable for programmatic clicks --}}
+{{-- Hide WATI's floating button + bubble and block them from intercepting clicks.
+     Programmatic .click() from our FAB still works because it bypasses CSS pointer-events.
+     The chat window itself (.wa-chat-box) is left untouched so it can open and be interactive. --}}
 <style>
     .wa-widget-send-button,
-    .wa-chat-bubble {
-        position: fixed !important;
-        left: -9999px !important;
+    .wa-chat-bubble,
+    .wa-chat-box-popup-button,
+    [class*="wa-chat-bubble"],
+    [class*="wa-widget-send"],
+    [id^="wa-chat-bubble"],
+    [id^="wati-"] {
+        pointer-events: none !important;
         opacity: 0 !important;
+        visibility: hidden !important;
     }
 </style>
 
