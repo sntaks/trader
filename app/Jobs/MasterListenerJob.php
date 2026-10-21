@@ -235,15 +235,11 @@ class MasterListenerJob implements ShouldQueue
 
     /**
      * Deriv rejected the token: retrying cannot help. Mark the connection expired so every page and
-     * trade path treats it as needing a reconnect, and stop each bot that copies from it, with a reason.
+     * trade path treats it as needing a reconnect, and stop each bot that depends on it, with a reason.
      */
     private function stopForReauth(DerivConnection $connection, DerivAuthException $e): void
     {
-        $connection->update(['expires_at' => now()]);
-
-        $stopped = $this->followerSettings($connection)
-            ->where('is_running', true)
-            ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+        $stopped = $connection->requireReauth();
 
         Log::error("MasterListenerJob: Deriv rejected the token for connection #{$this->connectionId} — {$e->getMessage()}. Stopped {$stopped} bot(s); the owner must reconnect.");
     }

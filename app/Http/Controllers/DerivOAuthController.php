@@ -6,6 +6,7 @@ use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\DerivTokenRefresher;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,8 +16,6 @@ use Illuminate\Support\Str;
 class DerivOAuthController extends Controller
 {
     private const AUTH_URL = 'https://auth.deriv.com/oauth2/auth';
-
-    private const TOKEN_URL = 'https://auth.deriv.com/oauth2/token';
 
     /**
      * Redirect user to Deriv OAuth authorization page with PKCE.
@@ -69,7 +68,7 @@ class DerivOAuthController extends Controller
         }
 
         try {
-            $response = Http::asForm()->post(self::TOKEN_URL, [
+            $response = Http::asForm()->post(DerivTokenRefresher::TOKEN_URL, [
                 'grant_type' => 'authorization_code',
                 'client_id' => config('deriv.app_id'),
                 'code' => $code,
