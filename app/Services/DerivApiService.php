@@ -100,10 +100,13 @@ class DerivApiService
 
     // ─── WebSocket API ────────────────────────────────────────────────────────
 
-    /** Get the account's current balance. Cached 30 s. */
-    public function getBalance(DerivConnection $connection, string $accountId): array
+    /**
+     * Get the account's balance, at most $maxAgeSeconds old. Each max age has its own cache entry,
+     * so a caller that needs a fresh balance never receives one cached for a longer-lived caller.
+     */
+    public function getBalance(DerivConnection $connection, string $accountId, int $maxAgeSeconds = 30): array
     {
-        return $this->cachedCall($connection, "{$accountId}:balance", 30, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]));
+        return $this->cachedCall($connection, "{$accountId}:balance:{$maxAgeSeconds}s", $maxAgeSeconds, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]));
     }
 
     /**

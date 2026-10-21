@@ -96,3 +96,19 @@ test('startBot asks for a follower account when none is set', function () {
     expect($setting->fresh()->is_running)->toBeFalse();
     Bus::assertNotDispatched(MasterListenerJob::class);
 });
+
+test('the dashboard polls the balance with a two minute max age', function () {
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->with(Mockery::type(DerivConnection::class), 'DOT100', 120)
+        ->atLeast()->once()
+        ->andReturn(['balance' => ['balance' => 321.5]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT100']);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->assertSee('321.50 USD');
+});

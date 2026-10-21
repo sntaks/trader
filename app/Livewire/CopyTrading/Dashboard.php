@@ -124,6 +124,9 @@ class Dashboard extends Component
     /** Shown instead of saving a setting without a follower account when Deriv accounts cannot be loaded. */
     private const ACCOUNTS_UNAVAILABLE = "We couldn't load your Deriv accounts. Reconnect or try again.";
 
+    /** The dashboard polls every 15 s; reading the balance at most every 2 min keeps that to one Deriv session per viewer per 2 min. */
+    private const POLLED_BALANCE_MAX_AGE_SECONDS = 120;
+
     /** Shown when the bot is started before a follower account is chosen; every copy is bought on that account. */
     private const FOLLOWER_ACCOUNT_REQUIRED = 'Choose the account to copy trades into before starting.';
 
@@ -819,7 +822,7 @@ class Dashboard extends Component
         }
 
         try {
-            $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId);
+            $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId, self::POLLED_BALANCE_MAX_AGE_SECONDS);
 
             return (float) ($result['balance']['balance'] ?? 0);
         } catch (\Throwable) {

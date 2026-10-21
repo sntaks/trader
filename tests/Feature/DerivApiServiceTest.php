@@ -260,3 +260,22 @@ test('buys use trade priority', function () {
     expect($result['buy']['contract_id'])->toBe(11);
     expect(fn () => $service->getBalance(DerivConnection::factory()->create(), 'DOT100'))->toThrow(DerivRateLimitedException::class);
 });
+
+test('a longer max age reuses the cached balance', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 5]]]);
+    $connection = DerivConnection::factory()->create();
+
+    $first = $service->getBalance($connection, 'DOT100', 120);
+    $this->travel(60)->seconds();
+
+    expect($service->getBalance($connection, 'DOT100', 120))->toBe($first);
+});
+
+test('default callers never get the two minute balance', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 5]], ['balance' => ['balance' => 9]]], sockets: 2);
+    $connection = DerivConnection::factory()->create();
+
+    $service->getBalance($connection, 'DOT100', 120);
+
+    expect($service->getBalance($connection, 'DOT100')['balance']['balance'])->toBe(9);
+});
