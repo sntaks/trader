@@ -206,3 +206,58 @@ test('a failed google sign-in returns to login with a message', function (Throwa
     'stale state' => fn () => new InvalidStateException,
     'token error' => fn () => new ClientException('bad', new GuzzleRequest('POST', 'https://oauth2.googleapis.com/token'), new GuzzleResponse(400)),
 ]);
+
+test('a google user with two-factor goes to the challenge', function () {
+    $user = User::factory()->withTwoFactor()->create(['google_id' => '109876543210', 'email' => 'google@example.com']);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'))->assertRedirect(route('two-factor.login'));
+
+    $this->assertGuest();
+    expect(session('login.id'))->toBe($user->id)
+        ->and(session('login.remember'))->toBeTrue();
+});
+
+test('a verified-email match with two-factor goes to the challenge', function () {
+    $user = User::factory()->withTwoFactor()->create(['google_id' => null, 'email' => 'google@example.com']);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'))->assertRedirect(route('two-factor.login'));
+
+    $this->assertGuest();
+    expect(session('login.id'))->toBe($user->id);
+});
+
+test('the challenge page accepts a google user sent to it', function () {
+    User::factory()->withTwoFactor()->create(['google_id' => '109876543210', 'email' => 'google@example.com']);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'));
+
+    $this->get(route('two-factor.login'))->assertOk();
+});
+
+test('a cancelled google sign-in by a signed-in user returns to the dashboard', function () {
+    $this->actingAs(User::factory()->create())
+        ->get(route('auth.google.callback', ['error' => 'access_denied']))
+        ->assertRedirect(route('dashboard'))
+        ->assertSessionHas('error', GoogleAuthController::CANCELLED_MESSAGE);
+});
+
+test('a long google name is capped at 100 characters, not display width', function () {
+    mockSocialite(fakeSocialiteUser(['name' => str_repeat('名', 150)]));
+
+    $this->get(route('auth.google.callback'));
+
+    expect(mb_strlen(User::where('google_id', '109876543210')->value('name')))->toBe(100);
+});
+
+test('a google user who passes the challenge is signed in', function () {
+    $user = User::factory()->withTwoFactor()->create(['google_id' => '109876543210', 'email' => 'google@example.com']);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'));
+    $this->post(route('two-factor.login.store'), ['recovery_code' => 'recovery-code-1'])->assertRedirect();
+
+    $this->assertAuthenticatedAs($user);
+});

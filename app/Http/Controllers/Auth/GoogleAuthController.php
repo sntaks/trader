@@ -32,7 +32,7 @@ class GoogleAuthController extends Controller
     public function callback(Request $request): RedirectResponse
     {
         if ($request->filled('error')) {
-            return redirect()->route('login')->withErrors(['google' => self::CANCELLED_MESSAGE]);
+            return $this->failed(self::CANCELLED_MESSAGE);
         }
 
         try {
@@ -40,7 +40,7 @@ class GoogleAuthController extends Controller
         } catch (InvalidStateException|GuzzleException $e) {
             Log::warning('Google sign-in failed: '.$e::class.' — '.$e->getMessage());
 
-            return redirect()->route('login')->withErrors(['google' => self::FAILED_MESSAGE]);
+            return $this->failed(self::FAILED_MESSAGE);
         }
 
         $googleEmail = strtolower(trim($googleUser->getEmail() ?? ''));
@@ -49,13 +49,11 @@ class GoogleAuthController extends Controller
         $user = User::where('google_id', $googleUser->getId())->first();
 
         if ($user) {
-            Auth::login($user, remember: true);
-
-            return redirect()->intended(route('dashboard'));
+            return $this->logIn($request, $user);
         }
 
         if (($googleUser->getRaw()['email_verified'] ?? false) !== true) {
-            return redirect()->route('login')->withErrors(['google' => self::UNVERIFIED_MESSAGE]);
+            return $this->failed(self::UNVERIFIED_MESSAGE);
         }
 
         $user = User::where('email', $googleEmail)->first();
@@ -71,9 +69,7 @@ class GoogleAuthController extends Controller
 
             $user->save();
 
-            Auth::login($user, remember: true);
-
-            return redirect()->intended(route('dashboard'));
+            return $this->logIn($request, $user);
         }
 
         $user = User::create([
@@ -90,9 +86,32 @@ class GoogleAuthController extends Controller
 
         Mail::to($user)->send(new WelcomeMail($user));
 
+        return $this->logIn($request, $user);
+    }
+
+    /**
+     * Log the user in, or hand them to Fortify's two-factor challenge when they have confirmed two-factor:
+     * Google proves the mailbox, not the second factor.
+     */
+    private function logIn(Request $request, User $user): RedirectResponse
+    {
+        if ($user->two_factor_confirmed_at) {
+            $request->session()->put(['login.id' => $user->getKey(), 'login.remember' => true]);
+
+            return redirect()->route('two-factor.login');
+        }
+
         Auth::login($user, remember: true);
 
         return redirect()->intended(route('dashboard'));
+    }
+
+    /** Send a failed sign-in back with its message: to the login page, or to the dashboard for someone already signed in. */
+    private function failed(string $message): RedirectResponse
+    {
+        return auth()->check()
+            ? redirect()->route('dashboard')->with('error', $message)
+            : redirect()->route('login')->withErrors(['google' => $message]);
     }
 
     /**
@@ -103,7 +122,7 @@ class GoogleAuthController extends Controller
     {
         $name = trim((string) $googleUser->getName());
 
-        return $name !== '' ? Str::limit($name, 100, '') : Str::before($email, '@');
+        return $name !== '' ? mb_substr($name, 0, 100) : Str::before($email, '@');
     }
 
     private function generateAccountNumber(): string
