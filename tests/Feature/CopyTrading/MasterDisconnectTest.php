@@ -121,3 +121,47 @@ test('an own-account disconnect leaves the setting with no master at all', funct
         ->assertDontSee('Your own account is the master')
         ->assertSee('No master chosen');
 });
+
+/** A signed-in follower with a Deriv connection and a setting that has no master. */
+function followerWithoutMaster(?string $stopReason = null): User
+{
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create([
+        'user_id' => $user->id,
+        'master_connection_id' => null,
+        'is_running' => false,
+        'stop_reason' => $stopReason,
+    ]);
+
+    return $user;
+}
+
+test('a stopped follower without a master sees the no-master notice', function () {
+    Livewire::actingAs(followerWithoutMaster())
+        ->test(Dashboard::class)
+        ->assertSee('No master to copy')
+        ->assertSee('copying between your own Deriv accounts is available now');
+});
+
+test('the master-disconnected popup offers change master, not start', function () {
+    $user = followerWithoutMaster(CopySetting::STOP_REASON_MASTER_DISCONNECTED);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->assertSee('Change master')
+        ->assertDontSee('Start New Session')
+        ->assertDontSee('No master to copy')
+        ->call('chooseNewMaster')
+        ->assertSet('settingsOpen', true)
+        ->assertSet('showMasterList', true);
+
+    expect($user->copySetting->fresh()->stop_reason)->toBeNull();
+});
+
+test('other stop popups still offer start new session', function () {
+    Livewire::actingAs(followerWithoutMaster('take_profit'))
+        ->test(Dashboard::class)
+        ->assertSee('Start New Session');
+});

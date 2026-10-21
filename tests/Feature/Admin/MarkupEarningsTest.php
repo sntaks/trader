@@ -9,6 +9,8 @@ use Livewire\Livewire;
 
 use function Pest\Laravel\mock;
 
+afterEach(fn () => Livewire::flushState());
+
 /** Make getMarkupStatistics return the default statistics merged with $data. */
 function mockMarkupStatistics(array $data): void
 {
@@ -96,4 +98,22 @@ test('the admin dashboard shows the markup card', function () {
 
     $this->actingAs(markupAdmin())->get(route('admin.dashboard'))
         ->assertSee(DerivApiService::MARKUP_TOKEN_MISSING);
+});
+
+test('lazy loading is back on for later tests', function () {
+    config(['deriv.partner_token' => null]);
+
+    $this->actingAs(markupAdmin())->get(route('admin.dashboard'))
+        ->assertSuccessful()
+        ->assertDontSee(DerivApiService::MARKUP_TOKEN_MISSING);
+});
+
+test('an app that is both our apps is labelled once as both', function () {
+    config(['deriv.app_id' => '111', 'deriv.app_id_pat' => '111']);
+    mockMarkupStatistics(['breakdown' => [
+        ['app_id' => '111', 'app_markup_usd' => 3.0, 'volume_usd' => 50, 'payout_usd' => 90, 'contract_count' => 7, 'client_count' => 1],
+    ]]);
+
+    Livewire::withoutLazyLoading()->actingAs(markupAdmin())->test(MarkupEarnings::class)
+        ->assertSee('OAuth + PAT app');
 });

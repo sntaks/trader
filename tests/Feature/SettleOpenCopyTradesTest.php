@@ -107,7 +107,7 @@ test('the sweeper is scheduled every minute', function () {
     $event = collect(app(Schedule::class)->events())
         ->first(fn (Event $event) => str_contains($event->command ?? '', 'copy-trades:settle'));
 
-    expect($event)->not->toBeNull()
+    expect($event)->toBeInstanceOf(Event::class)
         ->and($event->expression)->toBe('* * * * *')
         ->and($event->withoutOverlapping)->toBeTrue()
         ->and($event->expiresAt)->toBe(5);

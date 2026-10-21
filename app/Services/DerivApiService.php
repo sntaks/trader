@@ -131,7 +131,8 @@ class DerivApiService
 
     /**
      * Markup the platform's apps earned between two UTC dates, both included, read with the partner token.
-     * A successful read is cached for ten minutes per range.
+     * A successful read is cached for ten minutes per range, and a failed one is remembered for a minute so a
+     * polling admin page does not repeat it. A 429 here starts no shared cooldown, so it never pauses copy trades.
      *
      * @return array{total_app_markup_usd: float|int, total_volume_usd: float|int, total_payout_usd: float|int, total_contract_count: int, total_client_count: int, breakdown: list<array{app_id: string, app_markup_usd: float|int, volume_usd: float|int, payout_usd: float|int, contract_count: int, client_count: int}>}
      *
@@ -148,12 +149,35 @@ class DerivApiService
         $dateFrom = $from->copy()->utc()->toDateString();
         $dateTo = $to->copy()->utc()->toDateString();
 
+        $failureKey = "deriv:markup-failure:{$dateFrom}:{$dateTo}";
+        $failure = Cache::get($failureKey);
+
+        if (is_array($failure)) {
+            throw $failure['rate_limited'] ? new DerivRateLimitedException($failure['message']) : new DerivApiException($failure['message']);
+        }
+
+        try {
+            return $this->readMarkupStatistics($token, $dateFrom, $dateTo);
+        } catch (DerivApiException $e) {
+            Cache::put($failureKey, ['rate_limited' => $e instanceof DerivRateLimitedException, 'message' => $e->getMessage()], 60);
+
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     *
+     * @throws DerivApiException
+     */
+    private function readMarkupStatistics(string $token, string $dateFrom, string $dateTo): array
+    {
         return Cache::remember("deriv:markup:{$dateFrom}:{$dateTo}", 600, function () use ($token, $dateFrom, $dateTo): array {
             $response = $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
                 'Deriv-App-ID' => $this->appIdFor(isPat: true),
                 'Authorization' => 'Bearer '.$token,
                 'Accept' => 'application/json',
-            ])->get(self::MARKUP_URL, ['date_from' => $dateFrom, 'date_to' => $dateTo]));
+            ])->get(self::MARKUP_URL, ['date_from' => $dateFrom, 'date_to' => $dateTo]), sharedCooldown: false);
 
             if ($response->status() === 401) {
                 throw new DerivApiException(self::MARKUP_TOKEN_REJECTED);
@@ -421,13 +445,14 @@ class DerivApiService
     }
 
     /**
-     * Send one REST request through the rate limiter. A 429 or a `RateLimit` error starts a cooldown for everyone.
+     * Send one REST request through the rate limiter. A 429 or a `RateLimit` error starts a cooldown for everyone,
+     * unless $sharedCooldown is false.
      *
      * @param  callable(): Response  $send
      *
      * @throws DerivApiException
      */
-    private function restRequest(?DerivConnection $connection, string $priority, callable $send): Response
+    private function restRequest(?DerivConnection $connection, string $priority, callable $send, bool $sharedCooldown = true): Response
     {
         $this->rateLimiter->acquire($connection, $priority);
 
@@ -438,8 +463,10 @@ class DerivApiService
         }
 
         if ($response->status() === 429 || $response->json('errors.0.code') === 'RateLimit') {
-            $retryAfter = $response->header('Retry-After');
-            $this->rateLimiter->coolDown(is_numeric($retryAfter) ? (int) $retryAfter : null);
+            if ($sharedCooldown) {
+                $retryAfter = $response->header('Retry-After');
+                $this->rateLimiter->coolDown(is_numeric($retryAfter) ? (int) $retryAfter : null);
+            }
 
             throw new DerivRateLimitedException('Deriv rate limit reached — try again shortly.');
         }

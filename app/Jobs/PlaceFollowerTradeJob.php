@@ -9,6 +9,7 @@ use App\Services\DerivApiService;
 use App\Services\MasterContractParser;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -190,6 +191,14 @@ class PlaceFollowerTradeJob implements ShouldQueue
             ]);
         } catch (UniqueConstraintViolationException) {
             Log::warning("PlaceFollowerTradeJob: master contract {$this->masterTrade['contract_id']} already copied for user {$this->userId}; skipped duplicate.");
+
+            return null;
+        } catch (QueryException $exception) {
+            if (DerivConnection::query()->whereKey($this->masterConnectionId)->exists()) {
+                throw $exception;
+            }
+
+            Log::warning("PlaceFollowerTradeJob: master {$this->masterConnectionId} was disconnected before the copy was placed; skipped.");
 
             return null;
         }
