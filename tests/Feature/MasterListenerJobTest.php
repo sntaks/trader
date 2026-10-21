@@ -10,6 +10,7 @@ use App\Services\DerivRateLimiter;
 use App\Services\WebSocketFrameCodec;
 use Carbon\CarbonInterval;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
@@ -86,25 +87,28 @@ function listenerFrames($peer): array
 }
 
 /**
- * Run each step on successive heartbeat writes made inside a session. The loop's own write before
- * the OTP is skipped; once the steps run out, the next write switches every follower off.
+ * Run each step on successive heartbeat writes made after the session subscribed to the stream.
+ * Writes before that (the loop's own, the session-open one) are skipped; once the steps run out,
+ * the next write switches every follower off.
  */
 function onSessionHeartbeats(int $connectionId, Closure ...$steps): void
 {
     $writes = 0;
+    $subscribed = false;
 
-    Event::listen(KeyWritten::class, function (KeyWritten $event) use ($connectionId, $steps, &$writes): void {
-        if ($event->key !== MasterListenerJob::heartbeatKey($connectionId)) {
+    Event::listen(MessageLogged::class, function (MessageLogged $event) use (&$subscribed): void {
+        if (str_contains($event->message, 'subscribed to transaction stream')) {
+            $subscribed = true;
+        }
+    });
+
+    Event::listen(KeyWritten::class, function (KeyWritten $event) use ($connectionId, $steps, &$writes, &$subscribed): void {
+        if (! $subscribed || $event->key !== MasterListenerJob::heartbeatKey($connectionId)) {
             return;
         }
 
+        $step = $steps[$writes] ?? fn () => CopySetting::query()->update(['is_running' => false]);
         $writes++;
-
-        if ($writes === 1) {
-            return;
-        }
-
-        $step = $steps[$writes - 2] ?? fn () => CopySetting::query()->update(['is_running' => false]);
         $step();
     });
 }
@@ -256,6 +260,7 @@ function listenerWithSignals(int $connectionId, ArrayObject $installs, Closure $
 }
 
 test('the worker\'s handler still runs on SIGTERM', function () {
+    Bus::fake([MasterListenerJob::class]);
     Sleep::fake();
     $master = runningMaster();
     $installs = new ArrayObject;
@@ -290,6 +295,7 @@ test('the worker\'s handler still runs on SIGTERM', function () {
 });
 
 test('the worker\'s handlers are restored when the job ends', function () {
+    Bus::fake([MasterListenerJob::class]);
     Sleep::fake();
     $master = runningMaster();
     $installs = new ArrayObject;
@@ -345,19 +351,22 @@ test('a dead token stops the listener and its followers', function () {
 
 test('other failures back off exponentially with jitter', function () {
     Sleep::fake();
-    $durations = new ArrayObject;
-    Sleep::whenFakingSleep(function (CarbonInterval $duration) use ($durations) {
-        $durations[] = $duration->totalSeconds;
+    $sleptSinceLastCall = new ArrayObject(['total' => 0]);
+    Sleep::whenFakingSleep(function (CarbonInterval $duration) use ($sleptSinceLastCall) {
+        $sleptSinceLastCall['total'] += $duration->totalSeconds;
     });
     $master = runningMaster();
-    $otpCalls = new ArrayObject;
+    $durations = new ArrayObject;
 
     mock(DerivApiService::class)
         ->shouldReceive('getOtpUrl')
-        ->andReturnUsing(function () use ($otpCalls) {
-            $otpCalls[] = true;
+        ->andReturnUsing(function () use ($durations, $sleptSinceLastCall) {
+            if ($sleptSinceLastCall['total'] > 0) {
+                $durations[] = $sleptSinceLastCall['total'];
+                $sleptSinceLastCall['total'] = 0;
+            }
 
-            if (count($otpCalls) === 4) {
+            if (count($durations) === 3) {
                 CopySetting::query()->update(['is_running' => false]);
             }
 
@@ -365,6 +374,7 @@ test('other failures back off exponentially with jitter', function () {
         });
 
     (new MasterListenerJob($master->id))->handle();
+    $durations[] = $sleptSinceLastCall['total'];
 
     expect($durations)->toHaveCount(4);
 
@@ -547,7 +557,12 @@ test('the listener hands over before retry_after', function () {
 
 test('a reconnect logs the gap', function () {
     Sleep::fake(syncWithCarbon: true);
-    Log::spy();
+    $warnings = new ArrayObject;
+    Event::listen(MessageLogged::class, function (MessageLogged $event) use ($warnings) {
+        if ($event->level === 'warning') {
+            $warnings[] = $event->message;
+        }
+    });
     $this->freezeSecond();
     $failedAt = now();
     $master = runningMaster();
@@ -577,9 +592,8 @@ test('a reconnect logs the gap', function () {
 
     $job->handle();
 
-    Log::shouldHaveReceived('warning')
-        ->withArgs(fn (string $message) => str_contains($message, 'gap of 12s') && str_contains($message, "#{$master->id}"))
-        ->once();
+    expect(collect($warnings)->filter(fn (string $message) => str_contains($message, 'gap of 12s') && str_contains($message, "#{$master->id}")))
+        ->toHaveCount(1);
 });
 
 test('a listener that exits removes its heartbeat', function () {
@@ -590,4 +604,115 @@ test('a listener that exits removes its heartbeat', function () {
     (new MasterListenerJob($master->id))->handle();
 
     expect(Cache::has(MasterListenerJob::heartbeatKey($master->id)))->toBeFalse();
+});
+
+test('the running key survives a long backoff', function () {
+    Sleep::fake(syncWithCarbon: true);
+    $master = runningMaster();
+    $keyAliveAfterEachSleep = new ArrayObject;
+    Sleep::whenFakingSleep(function () use ($master, $keyAliveAfterEachSleep) {
+        $keyAliveAfterEachSleep[] = Cache::has(MasterListenerJob::runningKey($master->id));
+    });
+    $otpCalls = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) === 6) {
+                CopySetting::query()->update(['is_running' => false]);
+            }
+
+            throw new DerivApiException('Deriv unreachable');
+        });
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($keyAliveAfterEachSleep->getArrayCopy())->not->toBeEmpty()->not->toContain(false);
+});
+
+test('a session refreshes the running key when it opens', function () {
+    Sleep::fake();
+    $this->freezeSecond();
+    $master = runningMaster();
+    $keyAliveAfterSubscribe = new ArrayObject;
+    $otpCalls = new ArrayObject;
+    onSessionHeartbeats($master->id);
+    [$job] = listenerOverPair($master->id);
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) > 1) {
+                CopySetting::query()->update(['is_running' => false]);
+
+                throw new DerivApiException('stop after one session');
+            }
+
+            $this->travel(50)->seconds();
+
+            return 'wss://ws.derivws.com/websockets/v3?otp=abc';
+        });
+
+    Event::listen(MessageLogged::class, function (MessageLogged $event) use ($master, $keyAliveAfterSubscribe) {
+        if (str_contains($event->message, 'subscribed to transaction stream')) {
+            $this->travel(20)->seconds();
+            $keyAliveAfterSubscribe[] = Cache::has(MasterListenerJob::runningKey($master->id));
+        }
+    });
+
+    $job->handle();
+
+    expect($keyAliveAfterSubscribe->getArrayCopy())->toBe([true]);
+});
+
+test('a stopping worker re-queues the listener while followers remain', function () {
+    Bus::fake([MasterListenerJob::class]);
+    Sleep::fake();
+    $master = runningMaster();
+    $installs = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($installs) {
+            $sigterm = collect($installs)->first(fn (array $install) => $install[0] === 15);
+
+            if ($sigterm === null) {
+                CopySetting::query()->update(['is_running' => false]);
+
+                throw new DerivApiException('no SIGTERM handler installed');
+            }
+
+            ($sigterm[1])(15);
+
+            throw new DerivApiException('interrupted by SIGTERM');
+        });
+
+    listenerWithSignals($master->id, $installs, fn () => null)->handle();
+
+    Bus::assertDispatched(MasterListenerJob::class, fn (MasterListenerJob $job) => $job->connectionId === $master->id);
+});
+
+test('a stopping worker with no followers left queues nothing', function () {
+    Bus::fake([MasterListenerJob::class]);
+    Sleep::fake();
+    $master = runningMaster();
+    $installs = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($installs) {
+            CopySetting::query()->update(['is_running' => false]);
+            $sigterm = collect($installs)->first(fn (array $install) => $install[0] === 15);
+            ($sigterm[1] ?? fn () => null)(15);
+
+            throw new DerivApiException('interrupted by SIGTERM');
+        });
+
+    listenerWithSignals($master->id, $installs, fn () => null)->handle();
+
+    Bus::assertNotDispatched(MasterListenerJob::class);
 });

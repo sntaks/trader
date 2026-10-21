@@ -37,6 +37,12 @@ class MasterListenerJob implements ShouldQueue
     /** ...up to this ceiling. */
     private const BACKOFF_MAX_SECONDS = 300;
 
+    /**
+     * The running key lives 60 s and the heartbeat 90 s; refreshing them at least this often, during
+     * sessions and through long backoff sleeps, keeps a second listener from starting beside this one.
+     */
+    private const HEARTBEAT_REFRESH_SECONDS = 20;
+
     /** A session that lasted this long counts as healthy and resets the failure count. */
     private const HEALTHY_SESSION_SECONDS = 60;
 
@@ -72,7 +78,7 @@ class MasterListenerJob implements ShouldQueue
             return false;
         }
 
-        self::dispatch($connectionId);
+        dispatch(new self($connectionId));
 
         return true;
     }
@@ -144,7 +150,7 @@ class MasterListenerJob implements ShouldQueue
                 }
 
                 if ($this->pastLifetime()) {
-                    $this->handOver();
+                    $this->handOver('lifetime reached');
 
                     return;
                 }
@@ -179,10 +185,12 @@ class MasterListenerJob implements ShouldQueue
 
                     Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in {$delay}s...");
 
-                    if (! $stopping) {
-                        Sleep::for($delay)->seconds();
-                    }
+                    $this->sleepKeepingAlive($delay, $stopping);
                 }
+            }
+
+            if ($stopping && $this->hasActiveFollowers($connection->fresh() ?? $connection)) {
+                $this->handOver('the worker is stopping');
             }
         } finally {
             foreach ($workerHandlers as $signal => $handler) {
@@ -196,10 +204,21 @@ class MasterListenerJob implements ShouldQueue
         return now()->getTimestamp() - $this->startedAt >= self::MAX_LIFETIME_SECONDS;
     }
 
-    /** Free this connection's keys and queue the successor, so the gap is about one worker poll. */
-    private function handOver(): void
+    /** Sleep the backoff in slices, refreshing the keys between them and waking early when stopping. */
+    private function sleepKeepingAlive(int $seconds, bool &$stopping): void
     {
-        Log::info("MasterListenerJob: lifetime reached for connection #{$this->connectionId} — handing over to a fresh job.");
+        while ($seconds > 0 && ! $stopping) {
+            $slice = min($seconds, self::HEARTBEAT_REFRESH_SECONDS);
+            Sleep::for($slice)->seconds();
+            $seconds -= $slice;
+            $this->updateHeartbeat();
+        }
+    }
+
+    /** Free this connection's keys and queue the successor, so the gap is about one worker poll. */
+    private function handOver(string $reason): void
+    {
+        Log::info("MasterListenerJob: {$reason} for connection #{$this->connectionId} — handing over to a fresh job.");
 
         Cache::forget(self::runningKey($this->connectionId));
         Cache::forget(self::heartbeatKey($this->connectionId));
@@ -283,6 +302,7 @@ class MasterListenerJob implements ShouldQueue
     private function runSession(string $wsUrl, DerivConnection $connection, ?string $chosenAccountId, bool &$stopping): void
     {
         $socket = $this->openSocket($wsUrl);
+        $this->updateHeartbeat();
         $this->logReconnectGap();
 
         try {
@@ -354,7 +374,7 @@ class MasterListenerJob implements ShouldQueue
 
             // Refresh heartbeat during active trading so it doesn't expire
             // when the socket never idles long enough to trigger the timeout branch.
-            if (time() - $lastHeartbeat >= 30) {
+            if (time() - $lastHeartbeat >= self::HEARTBEAT_REFRESH_SECONDS) {
                 $this->updateHeartbeat();
                 $lastHeartbeat = time();
 
