@@ -6,6 +6,8 @@
             <flux:text class="mt-1 text-zinc-500">Platform-wide analytics and user management overview.</flux:text>
         </div>
 
+        <livewire:admin.markup-earnings />
+
         <livewire:admin.platform-dashboard />
 
     </div>
