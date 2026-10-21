@@ -148,6 +148,31 @@ class CopySetting extends Model
         return true;
     }
 
+    /**
+     * Money left before the stop loss: the limit plus settled session profit minus every open stake.
+     * Null when no stop loss is set. Pass the caller's own pending row to leave it out of the open stake.
+     */
+    public function stopLossBudget(?int $exceptTradeId = null): ?float
+    {
+        if ($this->stop_loss === null) {
+            return null;
+        }
+
+        $session = CopyTrade::query()
+            ->where('user_id', $this->user_id)
+            ->when($this->session_started_at, fn ($query) => $query->where('traded_at', '>=', $this->session_started_at));
+
+        $settledProfit = (float) (clone $session)->whereNotNull('is_win')->sum('profit');
+
+        $openStake = (float) (clone $session)
+            ->whereNull('is_win')
+            ->whereIn('status', [CopyTrade::STATUS_PENDING, CopyTrade::STATUS_PLACED])
+            ->when($exceptTradeId, fn ($query) => $query->whereKeyNot($exceptTradeId))
+            ->sum('stake');
+
+        return round((float) $this->stop_loss + $settledProfit - $openStake, 2);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

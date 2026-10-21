@@ -26,6 +26,10 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('copy_trades', function (Blueprint $table) {
+            if (! Schema::hasIndex('copy_trades', ['user_id'])) {
+                $table->index('user_id');
+            }
+
             $table->dropUnique('copy_trades_user_master_contract_unique');
             $table->dropColumn(['master_contract_id', 'status', 'failure_reason']);
         });

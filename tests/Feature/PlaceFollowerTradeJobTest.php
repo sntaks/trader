@@ -4,6 +4,7 @@ use App\Exceptions\DerivApiException;
 use App\Jobs\CopyTradeJob;
 use App\Jobs\PlaceFollowerTradeJob;
 use App\Jobs\SettleCopyTradeJob;
+use App\Models\CopySetting;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Models\User;
@@ -317,4 +318,60 @@ test('a placed buy keeps the pattern lock', function () use ($masterTrade) {
     makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['markPatternConsumed' => true])->handle(app(DerivApiService::class));
 
     expect(Cache::has($lockKey))->toBeTrue();
+});
+
+/** Stop loss 10 with 5 already lost and the given stake held by another in-flight copy. */
+function budgetedFollower(DerivConnection $masterConn, float $heldStake): DerivConnection
+{
+    $followerConn = makeFollowerConnection();
+    $owner = ['user_id' => $followerConn->user_id, 'master_connection_id' => $masterConn->id];
+
+    CopySetting::factory()->create([...$owner, 'stop_loss' => 10, 'is_running' => true]);
+    CopyTrade::factory()->create([...$owner, 'stake' => 5, 'profit' => -5, 'traded_at' => now()->subMinute()]);
+    CopyTrade::factory()->open()->create([...$owner, 'stake' => $heldStake, 'status' => CopyTrade::STATUS_PENDING]);
+
+    return $followerConn;
+}
+
+test('reduces the stake when overlapping copies already hold part of the stop-loss budget', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = budgetedFollower($masterConn, 3);
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()
+        ->withArgs(fn ($conn, array $params) => $params['stake'] === 2.0)
+        ->andReturn(['buy' => ['transaction_id' => 1, 'contract_id' => 'C1']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, 3.0)->handle(app(DerivApiService::class));
+
+    expect((float) CopyTrade::where('master_contract_id', '222222')->sole()->stake)->toBe(2.0);
+});
+
+test('skips the buy when overlapping copies hold the whole stop-loss budget', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = budgetedFollower($masterConn, 5);
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldNotReceive('buyContract');
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, 3.0)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::where('master_contract_id', '222222')->sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toContain('stop-loss');
+});
+
+test('keeps long failure reasons within the column', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andThrow(new Exception(str_repeat('x', 300)));
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(mb_strlen(CopyTrade::where('user_id', $followerConn->user_id)->sole()->failure_reason))->toBeLessThanOrEqual(255);
 });
