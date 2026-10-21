@@ -8,7 +8,6 @@ return [
     */
     'app_id' => env('DERIV_APP_ID'),
     'app_id_pat' => env('DERIV_APP_ID_PAT'),
-    'oauth_url' => 'https://oauth.deriv.com/oauth2/authorize',
 
     /*
     | A Personal Access Token from the Deriv account that owns both apps, with the `application_read`
