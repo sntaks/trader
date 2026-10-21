@@ -7,6 +7,7 @@ use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivRateLimiter;
 use App\Services\MasterStreamProcessor;
+use App\Services\WebSocketFrameCodec;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -22,6 +23,9 @@ class MasterListenerJob implements ShouldQueue
 
     /** Single attempt; the scheduler restarts it if it dies. */
     public int $tries = 1;
+
+    /** Seconds a read waits before the idle tick (heartbeat, stop check, ping). */
+    protected float $readTimeoutSeconds = 30.0;
 
     public function __construct(
         public readonly int $connectionId,
@@ -107,60 +111,61 @@ class MasterListenerJob implements ShouldQueue
 
     private function runSession(string $wsUrl, bool &$stopping): void
     {
-        $host = (string) parse_url($wsUrl, PHP_URL_HOST);
+        $socket = $this->openSocket($wsUrl);
 
-        $context = DerivApiService::streamContext();
-
-        $socket = @stream_socket_client(
-            "ssl://{$host}:443",
-            $errno,
-            $errstr,
-            30,
-            STREAM_CLIENT_CONNECT,
-            $context,
-        );
-
-        if (! $socket) {
-            throw new \RuntimeException("WebSocket connection failed: {$errstr}");
+        try {
+            $this->setReadTimeout($socket);
+            $this->listen($socket, $stopping);
+        } finally {
+            if (is_resource($socket)) {
+                fclose($socket);
+            }
         }
+    }
 
-        // 30-second read timeout — lets us check stop condition periodically when idle
-        stream_set_timeout($socket, 30);
-
-        $this->sendWsHandshake($socket, $wsUrl);
-
+    /**
+     * Read frames until the session should end. Bytes of a frame that has not fully arrived stay in
+     * the codec across read timeouts, so a slow frame is never lost or misread.
+     *
+     * @param  resource  $socket
+     */
+    private function listen($socket, bool &$stopping): void
+    {
         // OTP session is pre-authenticated; no authorize message required
-        $this->sendWsMessage($socket, ['transaction' => 1, 'subscribe' => 1, 'req_id' => MasterStreamProcessor::TRANSACTION_REQ_ID]);
+        $this->sendJson($socket, ['transaction' => 1, 'subscribe' => 1, 'req_id' => MasterStreamProcessor::TRANSACTION_REQ_ID]);
 
         Log::info("MasterListenerJob: subscribed to transaction stream for connection #{$this->connectionId}");
 
+        $codec = new WebSocketFrameCodec;
         $processor = new MasterStreamProcessor($this->connectionId);
-        $lastHeartbeat = 0;
+        $lastHeartbeat = time();
 
         while (true) {
-            $message = $this->receiveWsMessage($socket);
+            $bytes = fread($socket, 8192);
 
-            if ($message === null) {
-                $meta = stream_get_meta_data($socket);
-
-                if ($meta['timed_out'] ?? false) {
-                    $this->updateHeartbeat();
-                    $lastHeartbeat = time();
-
-                    if ($stopping || ! $this->hasActiveFollowers()) {
-                        Log::info('MasterListenerJob: shutting down cleanly.');
-                        fclose($socket);
-
-                        return;
-                    }
-
-                    $this->sendWsMessage($socket, ['ping' => 1, 'req_id' => MasterStreamProcessor::PING_REQ_ID]);
-
-                    continue;
+            if ($bytes === false || $bytes === '') {
+                if (! (stream_get_meta_data($socket)['timed_out'] ?? false)) {
+                    throw new \RuntimeException('Connection closed by server');
                 }
 
-                fclose($socket);
-                throw new \RuntimeException('Connection closed by server');
+                $this->updateHeartbeat();
+                $lastHeartbeat = time();
+
+                if ($stopping || ! $this->hasActiveFollowers()) {
+                    Log::info('MasterListenerJob: shutting down cleanly.');
+
+                    return;
+                }
+
+                $this->sendJson($socket, ['ping' => 1, 'req_id' => MasterStreamProcessor::PING_REQ_ID]);
+
+                continue;
+            }
+
+            $codec->push($bytes);
+
+            while (($frame = $codec->next()) !== null) {
+                $this->handleFrame($socket, $frame, $processor);
             }
 
             // Refresh heartbeat during active trading so it doesn't expire
@@ -169,18 +174,109 @@ class MasterListenerJob implements ShouldQueue
                 $this->updateHeartbeat();
                 $lastHeartbeat = time();
             }
-
-            try {
-                $outgoing = $processor->process($message);
-            } catch (\Throwable $e) {
-                fclose($socket);
-                throw $e;
-            }
-
-            foreach ($outgoing as $reply) {
-                $this->sendWsMessage($socket, $reply);
-            }
         }
+    }
+
+    /**
+     * @param  resource  $socket
+     * @param  array{opcode: int, payload: string}  $frame
+     */
+    private function handleFrame($socket, array $frame, MasterStreamProcessor $processor): void
+    {
+        switch ($frame['opcode']) {
+            case WebSocketFrameCodec::OPCODE_PING:
+                fwrite($socket, WebSocketFrameCodec::encode(WebSocketFrameCodec::OPCODE_PONG, $frame['payload']));
+
+                return;
+            case WebSocketFrameCodec::OPCODE_PONG:
+                return;
+            case WebSocketFrameCodec::OPCODE_CLOSE:
+                fwrite($socket, WebSocketFrameCodec::encode(WebSocketFrameCodec::OPCODE_CLOSE, $frame['payload']));
+
+                throw new \RuntimeException('Connection closed by server (close frame)');
+        }
+
+        $message = json_decode($frame['payload'], true);
+
+        if (! is_array($message)) {
+            return;
+        }
+
+        foreach ($processor->process($message) as $reply) {
+            $this->sendJson($socket, $reply);
+        }
+    }
+
+    /**
+     * Connect to Deriv over TLS and complete the WebSocket handshake.
+     *
+     * @return resource
+     */
+    protected function openSocket(string $wsUrl)
+    {
+        $host = (string) parse_url($wsUrl, PHP_URL_HOST);
+
+        $socket = @stream_socket_client(
+            "ssl://{$host}:443",
+            $errno,
+            $errstr,
+            30,
+            STREAM_CLIENT_CONNECT,
+            DerivApiService::streamContext(),
+        );
+
+        if (! $socket) {
+            throw new \RuntimeException("WebSocket connection failed: {$errstr}");
+        }
+
+        $this->setReadTimeout($socket);
+        $this->performHandshake($socket, $wsUrl);
+
+        return $socket;
+    }
+
+    /**
+     * Send the upgrade request and require a 101 reply.
+     *
+     * @param  resource  $socket
+     */
+    protected function performHandshake($socket, string $wsUrl): void
+    {
+        $host = parse_url($wsUrl, PHP_URL_HOST);
+        $path = parse_url($wsUrl, PHP_URL_PATH).'?'.parse_url($wsUrl, PHP_URL_QUERY);
+        $key = base64_encode(random_bytes(16));
+
+        fwrite($socket, "GET {$path} HTTP/1.1\r\n"
+            ."Host: {$host}\r\n"
+            ."Upgrade: websocket\r\n"
+            ."Connection: Upgrade\r\n"
+            ."Sec-WebSocket-Key: {$key}\r\n"
+            ."Sec-WebSocket-Version: 13\r\n\r\n");
+
+        $response = (string) stream_get_line($socket, 4096, "\r\n\r\n");
+
+        if (! str_starts_with($response, 'HTTP/1.1 101')) {
+            $statusLine = strtok($response, "\r\n") ?: 'no response';
+
+            throw new \RuntimeException("WebSocket handshake failed: {$statusLine}");
+        }
+    }
+
+    /** @param resource $socket */
+    private function setReadTimeout($socket): void
+    {
+        $seconds = (int) floor($this->readTimeoutSeconds);
+
+        stream_set_timeout($socket, $seconds, (int) round(($this->readTimeoutSeconds - $seconds) * 1_000_000));
+    }
+
+    /**
+     * @param  resource  $socket
+     * @param  array<string, mixed>  $data
+     */
+    private function sendJson($socket, array $data): void
+    {
+        fwrite($socket, WebSocketFrameCodec::encode(WebSocketFrameCodec::OPCODE_TEXT, (string) json_encode($data)));
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -224,96 +320,5 @@ class MasterListenerJob implements ShouldQueue
         }
 
         return $first;
-    }
-
-    // ─── Raw WebSocket framing ─────────────────────────────────────────────────
-
-    private function sendWsHandshake($socket, string $wsUrl): void
-    {
-        $host = parse_url($wsUrl, PHP_URL_HOST);
-        $path = parse_url($wsUrl, PHP_URL_PATH).'?'.parse_url($wsUrl, PHP_URL_QUERY);
-        $key = base64_encode(random_bytes(16));
-
-        $handshake = "GET {$path} HTTP/1.1\r\n"
-            ."Host: {$host}\r\n"
-            ."Upgrade: websocket\r\n"
-            ."Connection: Upgrade\r\n"
-            ."Sec-WebSocket-Key: {$key}\r\n"
-            ."Sec-WebSocket-Version: 13\r\n\r\n";
-
-        fwrite($socket, $handshake);
-        stream_get_line($socket, 1024, "\r\n\r\n");
-    }
-
-    private function sendWsMessage($socket, array $data): void
-    {
-        $json = json_encode($data);
-        $length = strlen($json);
-        $frame = chr(0x81);
-
-        if ($length <= 125) {
-            $frame .= chr(0x80 | $length);
-        } elseif ($length <= 65535) {
-            $frame .= chr(0xFE).pack('n', $length);
-        } else {
-            $frame .= chr(0xFF).pack('J', $length);
-        }
-
-        $mask = random_bytes(4);
-        $frame .= $mask;
-
-        for ($i = 0; $i < $length; $i++) {
-            $frame .= $json[$i] ^ $mask[$i % 4];
-        }
-
-        fwrite($socket, $frame);
-    }
-
-    private function receiveWsMessage($socket): ?array
-    {
-        $header = $this->readExactly($socket, 2);
-
-        if (strlen($header) < 2) {
-            return null;
-        }
-
-        $isMasked = (ord($header[1]) & 0x80) !== 0;
-        $payloadLength = ord($header[1]) & 0x7F;
-
-        if ($payloadLength === 126) {
-            $payloadLength = (int) unpack('n', $this->readExactly($socket, 2))[1];
-        } elseif ($payloadLength === 127) {
-            $payloadLength = (int) unpack('J', $this->readExactly($socket, 8))[1];
-        }
-
-        $mask = $isMasked ? $this->readExactly($socket, 4) : null;
-        $payload = $this->readExactly($socket, $payloadLength);
-
-        if ($mask) {
-            for ($i = 0; $i < $payloadLength; $i++) {
-                $payload[$i] = $payload[$i] ^ $mask[$i % 4];
-            }
-        }
-
-        return json_decode($payload, true);
-    }
-
-    private function readExactly($socket, int $length): string
-    {
-        $data = '';
-        $remaining = $length;
-
-        while ($remaining > 0) {
-            $chunk = fread($socket, $remaining);
-
-            if ($chunk === false || $chunk === '') {
-                break;
-            }
-
-            $data .= $chunk;
-            $remaining -= strlen($chunk);
-        }
-
-        return $data;
     }
 }
