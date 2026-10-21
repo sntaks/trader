@@ -154,29 +154,64 @@ class DerivApiService
     }
 
     /**
+     * Currency of the given account, or of the first account when none is selected
+     * (the same account wsSession() falls back to).
+     *
+     * @throws DerivApiException
+     */
+    public function accountCurrency(DerivConnection $connection, ?string $accountId): string
+    {
+        $accounts = $this->getAccounts($connection);
+
+        $account = $accountId === null
+            ? ($accounts[0] ?? null)
+            : collect($accounts)->firstWhere('account_id', $accountId);
+
+        if (empty($account['currency'])) {
+            throw new DerivApiException('Account '.($accountId ?? '(default)').' not found for this connection.');
+        }
+
+        return strtoupper($account['currency']);
+    }
+
+    /**
+     * Build the `proposal` request for a follower buy. Barriers are sent only when set.
+     *
+     * @param  array{contract_type: string, symbol: string, duration: int, duration_unit: string, stake: float, currency: string, basis?: string, barrier?: string|null, barrier2?: string|null}  $params
+     * @return array<string, mixed>
+     */
+    public static function proposalRequest(array $params): array
+    {
+        $proposal = [
+            'proposal' => 1,
+            'amount' => $params['stake'],
+            'basis' => $params['basis'] ?? 'stake',
+            'contract_type' => $params['contract_type'],
+            'currency' => $params['currency'],
+            'duration' => $params['duration'],
+            'duration_unit' => $params['duration_unit'],
+            'underlying_symbol' => $params['symbol'],
+        ];
+
+        foreach (['barrier', 'barrier2'] as $barrierKey) {
+            if (isset($params[$barrierKey]) && $params[$barrierKey] !== '') {
+                $proposal[$barrierKey] = $params[$barrierKey];
+            }
+        }
+
+        return $proposal;
+    }
+
+    /**
      * Buy a contract on behalf of a follower.
      * Fetches a price proposal then immediately buys it.
      *
-     * @param  array{contract_type: string, symbol: string, duration: int, duration_unit: string, stake: float, basis: string, follower_account_id?: string}  $params
+     * @param  array{contract_type: string, symbol: string, duration: int, duration_unit: string, stake: float, currency: string, basis?: string, barrier?: string|null, barrier2?: string|null, follower_account_id?: string|null}  $params
      */
     public function buyContract(DerivConnection $connection, array $params): array
     {
         return $this->wsSession($connection->access_token, function (Client $client) use ($params): array {
-            $proposal = [
-                'proposal' => 1,
-                'amount' => $params['stake'],
-                'basis' => $params['basis'] ?? 'stake',
-                'contract_type' => $params['contract_type'],
-                'currency' => 'USD',
-                'duration' => $params['duration'],
-                'duration_unit' => $params['duration_unit'],
-                'underlying_symbol' => $params['symbol'],
-                'req_id' => 1,
-            ];
-
-            if (isset($params['barrier']) && str_starts_with($params['contract_type'], 'DIGIT')) {
-                $proposal['barrier'] = $params['barrier'];
-            }
+            $proposal = [...self::proposalRequest($params), 'req_id' => 1];
 
             Log::debug('buyContract proposal', $proposal);
 
