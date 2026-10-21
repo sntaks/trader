@@ -2,9 +2,13 @@
 
 use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Models\User;
+use GuzzleHttp\Exception\ClientException;
+use GuzzleHttp\Psr7\Request as GuzzleRequest;
+use GuzzleHttp\Psr7\Response as GuzzleResponse;
 use Illuminate\Support\Facades\DB;
 use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
 use Laravel\Socialite\Contracts\Provider;
+use Laravel\Socialite\Two\InvalidStateException;
 use Laravel\Socialite\Two\User as SocialiteUser;
 
 function fakeSocialiteUser(array $attributes = []): SocialiteUser
@@ -167,3 +171,38 @@ test('linking to a verified account leaves its password and two-factor alone', f
         ->and($existing->two_factor_secret)->not->toBeNull()
         ->and($existing->google_id)->toBe('109876543210');
 });
+
+/** Make the Google provider throw $exception when the callback reads the user. */
+function mockSocialiteFailure(Throwable $exception): void
+{
+    $provider = Mockery::mock(Provider::class);
+    $provider->allows('user')->andThrow($exception);
+
+    $socialite = Mockery::mock(SocialiteFactory::class);
+    $socialite->allows('driver')->with('google')->andReturn($provider);
+
+    app()->instance(SocialiteFactory::class, $socialite);
+}
+
+test('cancelled google sign-in returns to login with a message', function () {
+    mockSocialiteFailure(new RuntimeException('user() must not be called after a cancel'));
+
+    $this->get(route('auth.google.callback', ['error' => 'access_denied']))
+        ->assertRedirect(route('login'))
+        ->assertSessionHasErrors(['google' => GoogleAuthController::CANCELLED_MESSAGE]);
+
+    $this->assertGuest();
+});
+
+test('a failed google sign-in returns to login with a message', function (Throwable $exception) {
+    mockSocialiteFailure($exception);
+
+    $this->get(route('auth.google.callback', ['code' => 'c', 'state' => 's']))
+        ->assertRedirect(route('login'))
+        ->assertSessionHasErrors(['google' => GoogleAuthController::FAILED_MESSAGE]);
+
+    $this->assertGuest();
+})->with([
+    'stale state' => fn () => new InvalidStateException,
+    'token error' => fn () => new ClientException('bad', new GuzzleRequest('POST', 'https://oauth2.googleapis.com/token'), new GuzzleResponse(400)),
+]);

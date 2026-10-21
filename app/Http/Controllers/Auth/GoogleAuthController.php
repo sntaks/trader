@@ -5,15 +5,23 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Mail\WelcomeMail;
 use App\Models\User;
+use GuzzleHttp\Exception\GuzzleException;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Contracts\User as SocialiteUser;
 use Laravel\Socialite\Facades\Socialite;
+use Laravel\Socialite\Two\InvalidStateException;
 
 class GoogleAuthController extends Controller
 {
+    public const CANCELLED_MESSAGE = 'Google sign-in was cancelled.';
+
+    public const FAILED_MESSAGE = 'Google sign-in did not complete. Please try again.';
+
     public const UNVERIFIED_MESSAGE = 'Google has not verified this email address yet. Verify it with Google, or sign in with your password.';
 
     public function redirect(): RedirectResponse
@@ -21,9 +29,19 @@ class GoogleAuthController extends Controller
         return Socialite::driver('google')->redirect();
     }
 
-    public function callback(): RedirectResponse
+    public function callback(Request $request): RedirectResponse
     {
-        $googleUser = Socialite::driver('google')->user();
+        if ($request->filled('error')) {
+            return redirect()->route('login')->withErrors(['google' => self::CANCELLED_MESSAGE]);
+        }
+
+        try {
+            $googleUser = Socialite::driver('google')->user();
+        } catch (InvalidStateException|GuzzleException $e) {
+            Log::warning('Google sign-in failed: '.$e::class.' — '.$e->getMessage());
+
+            return redirect()->route('login')->withErrors(['google' => self::FAILED_MESSAGE]);
+        }
 
         $googleEmail = strtolower(trim($googleUser->getEmail() ?? ''));
         $googleName = $this->displayName($googleUser, $googleEmail);

@@ -1,8 +1,10 @@
 <?php
 
+use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Models\User;
 use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
 use Laravel\Socialite\Two\AbstractProvider;
+use Laravel\Socialite\Two\InvalidStateException;
 use Laravel\Socialite\Two\User as SocialiteUser;
 
 /** Make the Google provider used by the link flow return $googleUser, or run $user() to throw. */
@@ -51,4 +53,24 @@ test('linking with the same but unverified google email does not verify it', fun
     $this->actingAs($user)->get(route('auth.google.link.callback'));
 
     expect($user->fresh()->email_verified_at)->toBeNull();
+});
+
+test('a failed google link returns to the profile page with a message', function () {
+    $user = User::factory()->create();
+    mockGoogleLink(fn () => throw new InvalidStateException);
+
+    $this->actingAs($user)
+        ->get(route('auth.google.link.callback'))
+        ->assertRedirect(route('profile.edit'))
+        ->assertSessionHasErrors(['google' => GoogleAuthController::FAILED_MESSAGE]);
+});
+
+test('a cancelled google link returns to the profile page with a message', function () {
+    $user = User::factory()->create();
+    mockGoogleLink(fn () => throw new RuntimeException('user() must not be called after a cancel'));
+
+    $this->actingAs($user)
+        ->get(route('auth.google.link.callback', ['error' => 'access_denied']))
+        ->assertRedirect(route('profile.edit'))
+        ->assertSessionHasErrors(['google' => GoogleAuthController::CANCELLED_MESSAGE]);
 });
