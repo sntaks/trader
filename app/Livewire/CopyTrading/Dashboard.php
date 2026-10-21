@@ -140,7 +140,7 @@ class Dashboard extends Component
     public const MASTER_REQUIRED = 'Choose a master to copy before starting.';
 
     /** Columns of the trade export, in order. */
-    public const EXPORT_HEADERS = ['Traded at', 'Symbol', 'Contract type', 'Duration', 'Stake', 'Payout', 'Profit', 'Result', 'Follower contract', 'Master contract', 'Failure reason'];
+    public const EXPORT_HEADERS = ['Traded at', 'Symbol', 'Contract type', 'Duration', 'Stake', 'Payout', 'Profit', 'Result', 'Follower contract', 'Master contract', 'Follower transaction', 'Master transaction', 'Failure reason'];
 
     public function mount(): void
     {
@@ -677,17 +677,21 @@ class Dashboard extends Component
         $this->showMasterList = true;
     }
 
-    /** Download every trade of the current session, in the table's order, as CSV. */
+    /**
+     * Download every trade of the current session, in the table's order, as RFC 4180 CSV. Rows are capped at the
+     * newest id when the export starts, so a trade placed mid-export cannot shift a page and repeat a row.
+     */
     public function exportTransactions(): StreamedResponse
     {
-        $trades = $this->sessionTradesQuery();
+        $query = $this->sessionTradesQuery();
+        $trades = $query->where('id', '<=', (clone $query)->reorder()->max('id') ?? 0);
 
         return response()->streamDownload(function () use ($trades): void {
             $output = fopen('php://output', 'w');
-            fputcsv($output, self::EXPORT_HEADERS);
+            fputcsv($output, self::EXPORT_HEADERS, escape: '');
 
             foreach ($trades->lazy() as $trade) {
-                fputcsv($output, $this->exportRow($trade));
+                fputcsv($output, $this->exportRow($trade), escape: '');
             }
 
             fclose($output);
@@ -723,6 +727,8 @@ class Dashboard extends Component
             $result,
             $text($trade->follower_contract_id),
             $text($trade->master_contract_id),
+            $text($trade->follower_trx_id),
+            $text($trade->master_trx_id),
             $text($trade->failure_reason),
         ];
     }

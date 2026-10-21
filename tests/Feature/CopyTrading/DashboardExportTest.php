@@ -41,7 +41,7 @@ function downloadedCsv(Testable $component): array
 {
     $content = base64_decode((string) data_get($component->effects, 'download.content'));
 
-    return array_map('str_getcsv', array_values(array_filter(explode("\n", $content), fn (string $line) => $line !== '')));
+    return array_map(fn (string $line) => str_getcsv($line, escape: ''), array_values(array_filter(explode("\n", $content), fn (string $line) => $line !== '')));
 }
 
 test('export downloads every session trade, newest first, as csv', function () {
@@ -119,4 +119,58 @@ test('the trade table has an export button', function () {
     Livewire::actingAs($setting->user)->test(Dashboard::class)
         ->assertSeeHtml('wire:click="exportTransactions"')
         ->assertSee('Export CSV');
+});
+
+test('export includes the transaction ids the table shows', function () {
+    $setting = exportSetting();
+    exportTrade($setting, ['traded_at' => now()->subMinute(), 'follower_trx_id' => '700001', 'master_trx_id' => '800001']);
+
+    $rows = downloadedCsv(Livewire::actingAs($setting->user)->test(Dashboard::class)->call('exportTransactions'));
+    $column = fn (string $header) => array_search($header, Dashboard::EXPORT_HEADERS, true);
+
+    expect(array_slice(Dashboard::EXPORT_HEADERS, $column('Master contract') + 1, 2))->toBe(['Follower transaction', 'Master transaction'])
+        ->and($rows[1][$column('Follower transaction')])->toBe('700001')
+        ->and($rows[1][$column('Master transaction')])->toBe('800001');
+});
+
+test('a backslash before a quote survives the export', function () {
+    $setting = exportSetting();
+    exportTrade($setting, ['traded_at' => now()->subMinute()], fn ($factory) => $factory->failed('a\\"b'));
+
+    $rows = downloadedCsv(Livewire::actingAs($setting->user)->test(Dashboard::class)->call('exportTransactions'));
+
+    expect($rows[1][array_search('Failure reason', Dashboard::EXPORT_HEADERS, true)])->toBe('a\\"b');
+});
+
+test('a trade placed mid-export is neither added nor repeats a row', function () {
+    $this->freezeTime();
+    $setting = exportSetting();
+    CopyTrade::factory()->count(1001)
+        ->sequence(fn ($sequence) => ['traded_at' => now()->subMinutes(50)->addSeconds($sequence->index)])
+        ->make(['user_id' => $setting->user_id, 'master_connection_id' => $setting->master_connection_id])
+        ->map(fn (CopyTrade $trade) => $trade->getAttributes())
+        ->chunk(250)
+        ->each(fn ($chunk) => CopyTrade::insert($chunk->values()->all()));
+
+    $component = Livewire::actingAs($setting->user)->test(Dashboard::class);
+    $inserted = false;
+    CopyTrade::retrieved(function () use (&$inserted, $setting): void {
+        if ($inserted) {
+            return;
+        }
+
+        $inserted = true;
+        CopyTrade::insert(CopyTrade::factory()->make([
+            'user_id' => $setting->user_id,
+            'master_connection_id' => $setting->master_connection_id,
+            'traded_at' => now(),
+        ])->getAttributes());
+    });
+
+    $component->call('exportTransactions');
+    $contracts = array_column(array_slice(downloadedCsv($component), 1), array_search('Follower contract', Dashboard::EXPORT_HEADERS, true));
+
+    expect($inserted)->toBeTrue()
+        ->and($contracts)->toHaveCount(1001)
+        ->and(array_unique($contracts))->toHaveCount(1001);
 });
