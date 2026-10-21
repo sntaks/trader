@@ -2,8 +2,8 @@
 
 namespace App\Livewire\Dashboard;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
-use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
@@ -11,17 +11,19 @@ use Livewire\Component;
 
 class Summary extends Component
 {
+    use SelectsDerivAccount;
+
     #[Computed]
     public function balance(): array
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->accountId) {
             return [];
         }
 
         try {
-            return app(DerivApiService::class)->getBalance($connection, $this->accountId($connection))['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $this->accountId)['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }
@@ -32,12 +34,12 @@ class Summary extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->accountId) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
-            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId($connection), 20, 0);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId, 20, 0);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -77,16 +79,9 @@ class Summary extends Component
         ];
     }
 
-    /**
-     * The copy setting's follower account, else the first listed account. Replaced by the account picker.
-     *
-     * @throws DerivApiException
-     */
-    private function accountId(DerivConnection $connection): string
+    protected function resetAccountData(): void
     {
-        return auth()->user()->copySetting?->follower_account_id
-            ?? app(DerivApiService::class)->getAccounts($connection)[0]['account_id']
-            ?? throw new DerivApiException('No Deriv account found.');
+        unset($this->balance, $this->recentProfitTable, $this->performance);
     }
 
     public function render(): View

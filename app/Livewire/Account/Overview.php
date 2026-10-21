@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Account;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
@@ -10,6 +11,8 @@ use Livewire\Component;
 
 class Overview extends Component
 {
+    use SelectsDerivAccount;
+
     public ?string $apiError = null;
 
     public ?string $resetSuccess = null;
@@ -87,14 +90,12 @@ class Overview extends Component
             return [];
         }
 
-        $accountId = $this->accounts[0]['account_id'] ?? null;
-
-        if (! $accountId) {
+        if (! $this->accountId) {
             return [];
         }
 
         try {
-            return app(DerivApiService::class)->getBalance($connection, $accountId)['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $this->accountId)['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }
@@ -112,6 +113,11 @@ class Overview extends Component
     public function realAccounts(): array
     {
         return array_values(array_filter($this->accounts, fn ($a) => ! $this->isDemo($a)));
+    }
+
+    protected function resetAccountData(): void
+    {
+        unset($this->balance);
     }
 
     private function isDemo(array $account): bool

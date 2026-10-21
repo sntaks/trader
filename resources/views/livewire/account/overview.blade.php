@@ -129,6 +129,8 @@
             </div>
         </div>
 
+        <x-deriv-account-select :accounts="$this->selectableAccounts()" />
+
         {{-- Live Balance (from WebSocket) --}}
         @if(! empty($liveBalance))
             <div class="rounded-xl border border-[#22C55E]/30 bg-[#22C55E]/5">

@@ -123,3 +123,45 @@ test('trade history gracefully handles api failure', function () {
         ->test(TradeHistory::class)
         ->assertSee('No trades yet');
 });
+
+test('trade history reads the selected account', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([
+        ['account_id' => 'DOT100', 'account_type' => 'demo', 'status' => 'active'],
+        ['account_id' => 'DOT200', 'account_type' => 'real', 'status' => 'active'],
+    ]);
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+    $mock->shouldReceive('getProfitTable')->once()->with(Mockery::any(), 'DOT200', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->set('accountId', 'DOT200')
+        ->assertHasNoErrors()
+        ->assertSet('accountId', 'DOT200');
+});
+
+test('trade history rejects an account the user does not own', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100', 'status' => 'active']]);
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', Mockery::any(), Mockery::any())
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+    $mock->shouldNotReceive('getProfitTable')->with(Mockery::any(), 'DOT999', Mockery::any(), Mockery::any());
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->set('accountId', 'DOT999')
+        ->assertHasErrors('accountId')
+        ->assertSet('accountId', 'DOT100');
+});

@@ -32,6 +32,17 @@ class DerivApiService
         ]);
     }
 
+    /**
+     * The accounts that can be traded on or read: Deriv marks closed ones `inactive`.
+     *
+     * @param  list<array<string, mixed>>  $accounts  As returned by getAccounts().
+     * @return list<array<string, mixed>>
+     */
+    public static function activeAccounts(array $accounts): array
+    {
+        return array_values(array_filter($accounts, fn (array $account) => ($account['status'] ?? 'active') !== 'inactive'));
+    }
+
     // ─── REST API ────────────────────────────────────────────────────────────
 
     /**

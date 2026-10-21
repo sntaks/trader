@@ -2,8 +2,8 @@
 
 namespace App\Livewire\Account;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
-use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
@@ -11,6 +11,8 @@ use Livewire\Component;
 
 class TradeHistory extends Component
 {
+    use SelectsDerivAccount;
+
     public string $activeTab = 'profit_table';
 
     public int $perPage = 25;
@@ -43,13 +45,13 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->accountId) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId($connection), $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId, $this->perPage, $offset);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -62,13 +64,13 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->accountId) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getStatement($connection, $this->accountId($connection), $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getStatement($connection, $this->accountId, $this->perPage, $offset);
 
             return $result['statement'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -114,16 +116,10 @@ class TradeHistory extends Component
         ];
     }
 
-    /**
-     * The copy setting's follower account, else the first listed account. Replaced by the account picker.
-     *
-     * @throws DerivApiException
-     */
-    private function accountId(DerivConnection $connection): string
+    protected function resetAccountData(): void
     {
-        return auth()->user()->copySetting?->follower_account_id
-            ?? app(DerivApiService::class)->getAccounts($connection)[0]['account_id']
-            ?? throw new DerivApiException('No Deriv account found.');
+        $this->page = 1;
+        unset($this->trades, $this->statement, $this->analytics);
     }
 
     public function render(): View

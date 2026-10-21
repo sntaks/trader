@@ -33,7 +33,6 @@ test('account overview shows accounts from rest api', function () {
 
     $mock = Mockery::mock(DerivApiService::class);
     $mock->shouldReceive('getAccounts')
-        ->once()
         ->andReturn([
             ['account_id' => 'CR12345', 'currency' => 'USD', 'is_demo' => false, 'balance' => 5000.00],
             ['account_id' => 'VRTC12345', 'currency' => 'USD', 'is_demo' => true, 'balance' => 10000.00],
@@ -57,7 +56,6 @@ test('account overview sets api error when rest call fails', function () {
 
     $mock = Mockery::mock(DerivApiService::class);
     $mock->shouldReceive('getAccounts')
-        ->once()
         ->andThrow(new DerivApiException('Token expired or invalid. Please reconnect your Deriv account.'));
     $mock->shouldReceive('getBalance')->andReturn([]);
 
@@ -146,4 +144,27 @@ test('refresh clears cache', function () {
     Livewire::actingAs($user)
         ->test(Overview::class)
         ->call('refresh');
+});
+
+test('overview shows the balance of the selected account', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([
+        ['account_id' => 'DOT100', 'currency' => 'USD', 'account_type' => 'demo', 'status' => 'active'],
+        ['account_id' => 'DOT200', 'currency' => 'USD', 'account_type' => 'real', 'status' => 'active'],
+    ]);
+    $mock->shouldReceive('getBalance')->with(Mockery::any(), 'DOT100')
+        ->andReturn(['balance' => ['balance' => 10, 'currency' => 'USD', 'loginid' => 'DOT100']]);
+    $mock->shouldReceive('getBalance')->with(Mockery::any(), 'DOT200')
+        ->andReturn(['balance' => ['balance' => 2500.5, 'currency' => 'USD', 'loginid' => 'DOT200']]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(Overview::class)
+        ->set('accountId', 'DOT200')
+        ->assertHasNoErrors()
+        ->assertSee('2,500.50');
 });

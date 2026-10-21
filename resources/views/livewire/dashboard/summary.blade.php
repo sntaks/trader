@@ -1,4 +1,6 @@
-<div>
+<div class="space-y-4">
+    <x-deriv-account-select :accounts="$this->selectableAccounts()" />
+
     @if(! empty($this->balance))
         {{-- Balance + Performance Row --}}
         <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
