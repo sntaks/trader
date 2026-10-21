@@ -32,3 +32,5 @@ auth.json
 /tasks
 /deploy
 /docs
+
+/.playwright-mcp
