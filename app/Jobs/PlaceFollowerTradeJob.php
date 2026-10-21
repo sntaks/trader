@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\MasterContractParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -18,6 +19,9 @@ class PlaceFollowerTradeJob implements ShouldQueue
     public int $tries = 1;
 
     public int $timeout = 30;
+
+    /** @var list<string> Keys a master trade must carry; see MasterContractParser::parse(). */
+    private const REQUIRED_TRADE_KEYS = ['symbol', 'contract_type', 'duration', 'duration_unit'];
 
     public function __construct(
         public readonly int $followerConnectionId,
@@ -38,17 +42,36 @@ class PlaceFollowerTradeJob implements ShouldQueue
             return;
         }
 
-        $symbol = $this->masterTrade['symbol'] ?? $this->masterTrade['underlying'] ?? 'R_50';
+        if (($this->masterTrade['shape_version'] ?? null) !== MasterContractParser::SHAPE_VERSION) {
+            Log::warning("PlaceFollowerTradeJob: skipped for user {$this->userId} — master trade lacks the current shape (queued by an older listener).");
+
+            return;
+        }
+
+        $missing = array_filter(
+            self::REQUIRED_TRADE_KEYS,
+            fn (string $key) => ! isset($this->masterTrade[$key]) || $this->masterTrade[$key] === '',
+        );
+
+        if ($missing !== []) {
+            Log::warning("PlaceFollowerTradeJob: skipped for user {$this->userId} — master trade is missing ".implode(', ', $missing).'.');
+
+            return;
+        }
+
+        $symbol = $this->masterTrade['symbol'];
 
         try {
             $result = $deriv->buyContract($followerConnection, [
-                'contract_type' => $this->masterTrade['contract_type'] ?? 'CALL',
+                'contract_type' => $this->masterTrade['contract_type'],
                 'symbol' => $symbol,
-                'duration' => $this->masterTrade['duration'] ?? 1,
-                'duration_unit' => $this->masterTrade['duration_unit'] ?? 't',
+                'duration' => (int) $this->masterTrade['duration'],
+                'duration_unit' => $this->masterTrade['duration_unit'],
                 'stake' => $this->stake,
                 'basis' => 'stake',
+                'currency' => $deriv->accountCurrency($followerConnection, $this->followerAccountId),
                 'barrier' => $this->masterTrade['barrier'] ?? null,
+                'barrier2' => $this->masterTrade['barrier2'] ?? null,
                 'follower_account_id' => $this->followerAccountId,
             ]);
 

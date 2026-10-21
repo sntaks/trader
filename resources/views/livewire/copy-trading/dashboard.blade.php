@@ -796,11 +796,11 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                             </div>
                         </div>
 
-                        {{-- Synthetic Indices --}}
+                        {{-- Trade Types --}}
                         <div>
-                            <flux:label class="mb-2 block">Synthetic Indices</flux:label>
+                            <flux:label class="mb-2 block">Trade Types</flux:label>
                             <div class="flex flex-wrap gap-2">
-                                @foreach(self::AVAILABLE_SYNTHETIC as $index)
+                                @foreach(array_keys(self::AVAILABLE_SYNTHETIC) as $index)
                                     <button wire:click="toggleSynthetic('{{ $index }}')"
                                         @class([
                                             'rounded px-2 py-1 text-xs font-medium transition-colors',
@@ -817,7 +817,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <div>
                             <flux:label class="mb-2 block">Forex Pairs</flux:label>
                             <div class="flex flex-wrap gap-2">
-                                @foreach(self::AVAILABLE_FOREX as $pair)
+                                @foreach(array_keys(self::AVAILABLE_FOREX) as $pair)
                                     <button wire:click="toggleForex('{{ $pair }}')"
                                         @class([
                                             'rounded px-2 py-1 text-xs font-medium transition-colors',

@@ -106,11 +106,13 @@ class Dashboard extends Component
         'masterTrxId' => true,
     ];
 
-    public const AVAILABLE_MARKETS = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'];
+    public const AVAILABLE_MARKETS = CopySetting::MARKET_SYMBOLS;
 
-    public const AVAILABLE_SYNTHETIC = ['DM', 'DD', 'OE', 'UO', 'TNT', 'OUD', 'RCP', 'RF', 'HILO', 'HLT'];
+    /** @var array<string, list<string>> Trade-type code => contract types. */
+    public const AVAILABLE_SYNTHETIC = CopySetting::TRADE_TYPES;
 
-    public const AVAILABLE_FOREX = ['AUD/CAD', 'AUD/CHF', 'AUD/JPY', 'EUR/USD', 'GBP/USD', 'USD/JPY'];
+    /** @var array<string, string> Forex label => Deriv symbol. */
+    public const AVAILABLE_FOREX = CopySetting::FOREX_SYMBOLS;
 
     public function mount(): void
     {
@@ -136,7 +138,7 @@ class Dashboard extends Component
         $this->followerPattern = $setting->follower_pattern ?? '111';
         $this->patternEnabled = $setting->pattern_enabled ?? true;
         $this->filterMarkets = $setting->filter_markets ?? [];
-        $this->syntheticIndices = $setting->synthetic_indices ?? [];
+        $this->syntheticIndices = CopySetting::knownTradeTypeCodes($setting->synthetic_indices ?? []);
         $this->forexPairs = $setting->forex_pairs ?? [];
         $this->masterAccountId = $setting->master_account_id;
         $this->followerAccountId = $setting->follower_account_id;

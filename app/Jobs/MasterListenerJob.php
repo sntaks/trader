@@ -5,11 +5,11 @@ namespace App\Jobs;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\MasterStreamProcessor;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Redis;
 
 class MasterListenerJob implements ShouldQueue
 {
@@ -130,13 +130,11 @@ class MasterListenerJob implements ShouldQueue
         $this->sendWsHandshake($socket, $wsUrl);
 
         // OTP session is pre-authenticated; no authorize message required
-        $this->sendWsMessage($socket, ['transaction' => 1, 'subscribe' => 1, 'req_id' => 2]);
+        $this->sendWsMessage($socket, ['transaction' => 1, 'subscribe' => 1, 'req_id' => MasterStreamProcessor::TRANSACTION_REQ_ID]);
 
         Log::info("MasterListenerJob: subscribed to transaction stream for connection #{$this->connectionId}");
 
-        // Pending map: req_id => transaction_data (awaiting proposal_open_contract)
-        $pending = [];
-        $nextReqId = 50;
+        $processor = new MasterStreamProcessor($this->connectionId);
         $lastHeartbeat = 0;
 
         while (true) {
@@ -156,7 +154,7 @@ class MasterListenerJob implements ShouldQueue
                         return;
                     }
 
-                    $this->sendWsMessage($socket, ['ping' => 1, 'req_id' => 99]);
+                    $this->sendWsMessage($socket, ['ping' => 1, 'req_id' => MasterStreamProcessor::PING_REQ_ID]);
 
                     continue;
                 }
@@ -172,96 +170,16 @@ class MasterListenerJob implements ShouldQueue
                 $lastHeartbeat = time();
             }
 
-            $this->handleMessage($socket, $message, $pending, $nextReqId);
-        }
-    }
-
-    private function handleMessage($socket, array $message, array &$pending, int &$nextReqId): void
-    {
-        $msgType = $message['msg_type'] ?? '';
-
-        if ($msgType === 'error') {
-            $error = $message['error'] ?? [];
-            Log::error("MasterListenerJob: Deriv API error for connection #{$this->connectionId}", [
-                'code' => $error['code'] ?? 'unknown',
-                'message' => $error['message'] ?? 'unknown',
-            ]);
-            throw new \RuntimeException('Deriv API error: '.($error['message'] ?? 'unknown'));
-        }
-
-        if ($msgType === 'transaction') {
-            $transaction = $message['transaction'] ?? [];
-            $action = $transaction['action'] ?? '';
-
-            if ($action === 'sell') {
-                $amount = (float) ($transaction['amount'] ?? 0);
-                $isWin = $amount > 0 ? 1 : 0;
-                $key = "master_outcomes:{$this->connectionId}";
-                Redis::lpush($key, $isWin);
-                Redis::ltrim($key, 0, 49);
-                Redis::incr("master_outcomes_count:{$this->connectionId}");
-
-                // Reset per-user pattern-consumed locks so the next buy can trigger a fresh trade
-                CopyTradeJob::clearAllPatternConsumed($this->connectionId);
-
-                Log::debug("MasterListenerJob: sell recorded for connection #{$this->connectionId}", ['is_win' => $isWin]);
-
-                return;
+            try {
+                $outgoing = $processor->process($message);
+            } catch (\Throwable $e) {
+                fclose($socket);
+                throw $e;
             }
 
-            if ($action !== 'buy') {
-                return;
+            foreach ($outgoing as $reply) {
+                $this->sendWsMessage($socket, $reply);
             }
-
-            $contractId = $transaction['contract_id'] ?? null;
-            $symbol = $transaction['symbol'] ?? $transaction['underlying'] ?? '?';
-            $contractType = $transaction['contract_type'] ?? '?';
-
-            Log::info("MasterListenerJob: buy detected — {$symbol} {$contractType} (contract #{$contractId})");
-
-            if ($contractId) {
-                $reqId = $nextReqId++;
-                $pending[$reqId] = $transaction;
-
-                $this->sendWsMessage($socket, [
-                    'proposal_open_contract' => 1,
-                    'contract_id' => $contractId,
-                    'req_id' => $reqId,
-                ]);
-            } else {
-                CopyTradeJob::dispatch($this->connectionId, $transaction);
-            }
-
-            return;
-        }
-
-        if ($msgType === 'proposal_open_contract') {
-            $reqId = $message['req_id'] ?? 0;
-
-            if (! isset($pending[$reqId])) {
-                return;
-            }
-
-            $baseTrade = $pending[$reqId];
-            unset($pending[$reqId]);
-
-            $contract = $message['proposal_open_contract'] ?? [];
-
-            Log::debug('MasterListenerJob: proposal_open_contract', array_intersect_key($contract, array_flip([
-                'contract_type', 'underlying', 'duration', 'duration_unit', 'barrier', 'last_digit',
-            ])));
-
-            $enriched = array_merge($baseTrade, [
-                'duration' => $contract['duration'] ?? 1,
-                'duration_unit' => $contract['duration_unit'] ?? 't',
-                'contract_type' => $contract['contract_type'] ?? ($baseTrade['contract_type'] ?? 'CALL'),
-                'symbol' => $contract['underlying'] ?? $baseTrade['symbol'] ?? $baseTrade['underlying'] ?? 'R_50',
-                'barrier' => $contract['barrier'] ?? $contract['last_digit'] ?? $baseTrade['barrier'] ?? null,
-            ]);
-
-            Log::info("MasterListenerJob: dispatching CopyTradeJob for connection #{$this->connectionId}");
-
-            CopyTradeJob::dispatch($this->connectionId, $enriched);
         }
     }
 
