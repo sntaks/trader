@@ -5,6 +5,7 @@
             <flux:heading size="sm">Connect your Deriv account first</flux:heading>
             <flux:text class="mb-4 mt-1 text-zinc-500">You need a connected Deriv account to view trade history.</flux:text>
             <flux:button href="{{ route('deriv.connect') }}" variant="primary" icon="link">Connect Deriv Account</flux:button>
+            <x-deriv-signup-link />
         </div>
     @else
 

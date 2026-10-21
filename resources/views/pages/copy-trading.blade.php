@@ -42,6 +42,7 @@
                         <flux:button href="{{ route('deriv.connect') }}" variant="primary" icon="link" class="mt-5 w-full justify-center">
                             Connect with Deriv
                         </flux:button>
+                        <x-deriv-signup-link />
                     </div>
 
                     {{-- PAT --}}

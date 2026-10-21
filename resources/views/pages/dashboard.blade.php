@@ -221,6 +221,7 @@
                             <flux:button href="{{ route('deriv.connect') }}" variant="primary" icon="link" class="mt-auto">
                                 Connect via Deriv
                             </flux:button>
+                            <x-deriv-signup-link />
                         </div>
 
                         {{-- Option 2: Personal Access Token --}}

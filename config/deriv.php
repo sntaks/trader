@@ -8,7 +8,21 @@ return [
     */
     'app_id' => env('DERIV_APP_ID'),
     'app_id_pat' => env('DERIV_APP_ID_PAT'),
-    'oauth_url' => 'https://oauth.deriv.com/oauth2/authorize',
+
+    /*
+    | A Personal Access Token from the Deriv account that owns both apps, with the `application_read`
+    | scope. It reads markup statistics for the admin dashboard and is never shown or sent elsewhere.
+    */
+    'partner_token' => env('DERIV_PARTNER_TOKEN'),
+
+    /*
+    | Affiliate tagging, from the Partners dashboard. When `affiliate_token` is set, Deriv sign-in and
+    | sign-up links carry `affiliate_token`, `utm_medium=affiliate`, `utm_campaign` and `utm_source`
+    | (the affiliate ID), as Deriv's OAuth documentation names them.
+    */
+    'affiliate_token' => env('DERIV_AFFILIATE_TOKEN'),
+    'affiliate_id' => env('DERIV_AFFILIATE_ID'),
+    'utm_campaign' => env('DERIV_UTM_CAMPAIGN', 'copytrader'),
 
     /*
     | Scopes requested at Deriv sign-in. `trade` covers every call this app makes. Deriv does not

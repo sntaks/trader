@@ -21,7 +21,8 @@ class DerivOAuthController extends Controller
     private const AUTH_URL = 'https://auth.deriv.com/oauth2/auth';
 
     /**
-     * Redirect user to Deriv OAuth authorization page with PKCE.
+     * Redirect user to Deriv OAuth authorization page with PKCE. `?signup=1` opens Deriv's sign-up form instead
+     * of its login form, so a new Deriv account is tagged with the affiliate token.
      */
     public function redirect(Request $request): RedirectResponse
     {
@@ -40,9 +41,32 @@ class DerivOAuthController extends Controller
             'state' => $state,
             'code_challenge' => $codeChallenge,
             'code_challenge_method' => 'S256',
+            ...$this->affiliateParameters(),
+            ...($request->query('signup') === '1' ? ['prompt' => 'registration'] : []),
         ]);
 
         return redirect()->away($url);
+    }
+
+    /**
+     * Deriv's affiliate tracking parameters, sent only when an affiliate token is configured.
+     *
+     * @return array<string, string>
+     */
+    private function affiliateParameters(): array
+    {
+        $token = (string) config('deriv.affiliate_token');
+
+        if ($token === '') {
+            return [];
+        }
+
+        return array_filter([
+            'affiliate_token' => $token,
+            'utm_medium' => 'affiliate',
+            'utm_campaign' => (string) config('deriv.utm_campaign'),
+            'utm_source' => (string) config('deriv.affiliate_id'),
+        ], fn (string $value) => $value !== '');
     }
 
     /**

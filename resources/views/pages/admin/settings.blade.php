@@ -27,22 +27,30 @@
                         </p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 px-4 py-3 dark:bg-zinc-800/50">
-                        <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">WebSocket Endpoint</p>
-                        <p class="mt-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                            wss://ws.binaryws.com/websockets/v3
+                        <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">PAT App ID</p>
+                        <p class="mt-1 font-mono text-sm font-semibold text-zinc-900 dark:text-white">
+                            {{ config('deriv.app_id_pat') ?: 'Same as App ID' }}
                         </p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 px-4 py-3 dark:bg-zinc-800/50">
                         <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">OAuth Scopes</p>
                         <p class="mt-1 font-mono text-xs text-zinc-700 dark:text-zinc-300">
-                            trade account_manage
+                            {{ config('deriv.oauth_scopes') }}
                         </p>
                     </div>
+                    @foreach(['Partner Token' => config('deriv.partner_token'), 'Affiliate Token' => config('deriv.affiliate_token')] as $label => $token)
+                        <div class="rounded-lg bg-zinc-50 px-4 py-3 dark:bg-zinc-800/50">
+                            <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">{{ $label }}</p>
+                            <p @class(['mt-1 text-sm font-semibold', 'text-green-600 dark:text-green-400' => filled($token), 'text-zinc-500' => blank($token)])>
+                                {{ filled($token) ? 'Configured' : 'Not set' }}
+                            </p>
+                        </div>
+                    @endforeach
                 </div>
                 <flux:callout variant="info" icon="information-circle">
                     <flux:callout.heading>Configure via environment variables</flux:callout.heading>
                     <flux:callout.text>
-                        Set <code class="font-mono text-xs">DERIV_APP_ID</code> and <code class="font-mono text-xs">DERIV_REDIRECT_URI</code> in your <code class="font-mono text-xs">.env</code> file.
+                        Set <code class="font-mono text-xs">DERIV_APP_ID</code>, <code class="font-mono text-xs">DERIV_APP_ID_PAT</code>, <code class="font-mono text-xs">DERIV_REDIRECT_URI</code>, <code class="font-mono text-xs">DERIV_PARTNER_TOKEN</code> and <code class="font-mono text-xs">DERIV_AFFILIATE_TOKEN</code> in your <code class="font-mono text-xs">.env</code> file. Markup is set per app in the Deriv developer dashboard.
                     </flux:callout.text>
                 </flux:callout>
             </div>
