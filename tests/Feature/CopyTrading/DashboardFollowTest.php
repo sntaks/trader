@@ -226,7 +226,8 @@ test('follow refuses to save when accounts cannot be loaded', function () {
         ->test(Dashboard::class)
         ->call('selectMaster', $master->id)
         ->call('follow')
-        ->assertHasErrors('followerAccountId');
+        ->assertHasErrors('followerAccountId')
+        ->assertSee('Reconnect or try again');
 
     expect(CopySetting::count())->toBe(0);
 });
@@ -296,4 +297,22 @@ test('dashboard does not show the masters email', function () {
         ->assertDontSee('mia.master@example.test')
         ->set('showMasterList', true)
         ->assertDontSee('mia.master@example.test');
+});
+
+test('saveSettings in own-account mode requires a master account', function () {
+    $user = followTestUser();
+    $setting = CopySetting::factory()->create([
+        'user_id' => $user->id,
+        'master_connection_id' => $user->derivConnection->id,
+        'master_account_id' => 'DOT100',
+        'follower_account_id' => 'DOT200',
+    ]);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->set('masterAccountId', '')
+        ->call('saveSettings')
+        ->assertHasErrors(['masterAccountId' => 'required']);
+
+    expect($setting->fresh()->master_account_id)->toBe('DOT100');
 });

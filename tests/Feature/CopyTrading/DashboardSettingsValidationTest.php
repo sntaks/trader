@@ -94,3 +94,15 @@ test('performReset validates settings before saving them', function () {
     expect(CopyTrade::where('user_id', $setting->user_id)->count())->toBe(1)
         ->and($setting->fresh()->take_profit)->toEqual('10.00');
 });
+
+test('a rejected reset says why next to the reset buttons', function () {
+    $setting = settingsTestSetting();
+
+    Livewire::actingAs($setting->user)
+        ->test(Dashboard::class)
+        ->call('openResetModal')
+        ->set('stake', 2000.0)
+        ->call('performReset')
+        ->assertHasErrors('stake')
+        ->assertSee('Some settings are invalid. Open More Settings to fix them.');
+});

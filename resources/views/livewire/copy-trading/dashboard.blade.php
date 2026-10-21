@@ -185,6 +185,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 </div>
             </div>
 
+            @if($errors->any())
+                <p class="px-6 pt-3 text-xs text-red-500">Some settings are invalid. Open More Settings to fix them.</p>
+            @endif
+
             {{-- Buttons --}}
             <div class="flex gap-3 border-t border-[#1F2937] px-6 py-4">
                 <flux:button wire:click="performReset" wire:loading.attr="disabled" wire:target="performReset"
@@ -364,6 +368,9 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     </div>
 
                     @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                    @if(count($this->myAccounts) === 0)
+                        @error('followerAccountId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                    @endif
 
                     <div class="flex gap-2 pt-1">
                         <flux:button wire:click="follow" wire:loading.attr="disabled" wire:target="follow" variant="primary">

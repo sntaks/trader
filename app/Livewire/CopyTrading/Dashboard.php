@@ -360,15 +360,15 @@ class Dashboard extends Component
 
         $this->validate(['followerAccountId' => ['required', 'in:'.implode(',', $validAccountIds)]]);
 
-        if ($this->ownAccountMode && $this->masterAccountId) {
+        if ($this->ownAccountMode) {
             $this->validate(
-                ['masterAccountId' => ['nullable', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
+                ['masterAccountId' => ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
                 ['masterAccountId.different' => 'The master account must differ from the account you copy into.'],
             );
         }
 
         $setting->update([
-            'master_account_id' => $this->ownAccountMode ? ($this->masterAccountId ?: null) : null,
+            'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
             'stake' => $this->stake,
             'follow_master_stake' => $this->followMasterStake,
             'safe_mode' => $this->safeMode,
