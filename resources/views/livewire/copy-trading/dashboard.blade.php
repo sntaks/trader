@@ -1132,7 +1132,7 @@ $setting = $this->setting;
                             </thead>
                             <tbody>
                                 @foreach($trades as $i => $trade)
-                                    @php $rowNum = ($trades->currentPage() - 1) * $trades->perPage() + $i + 1; @endphp
+                                    @php $rowNum = $trades->total() - (($trades->currentPage() - 1) * $trades->perPage() + $i); @endphp
                                     <tr wire:key="{{ $trade->id }}"
                                         @class([
                                             'border-b border-[#1F2937]/50 transition-colors',

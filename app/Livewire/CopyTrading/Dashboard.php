@@ -878,7 +878,7 @@ class Dashboard extends Component
             $query->where('traded_at', '>=', $sessionStart);
         }
 
-        $trades = $query->orderBy('traded_at')->paginate($this->perPage);
+        $trades = $query->orderByDesc('traded_at')->orderByDesc('id')->paginate($this->perPage);
 
         $this->runStartedAt = $this->setting?->is_running ? $this->setting->session_started_at?->timestamp : null;
 
