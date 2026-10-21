@@ -55,6 +55,9 @@ class MasterListenerJob implements ShouldQueue
     /** Set once a successor is queued, so this run's cleanup leaves the successor's keys alone. */
     private bool $handedOver = false;
 
+    /** When the last session failed; cleared once the next session opens and the gap is logged. */
+    private ?int $disconnectedAt = null;
+
     public function __construct(
         public readonly int $connectionId,
     ) {
@@ -105,6 +108,7 @@ class MasterListenerJob implements ShouldQueue
         } finally {
             if (! $this->handedOver) {
                 Cache::forget(self::runningKey($this->connectionId));
+                Cache::forget(self::heartbeatKey($this->connectionId));
             }
         }
     }
@@ -168,6 +172,7 @@ class MasterListenerJob implements ShouldQueue
 
                     return;
                 } catch (\Throwable $e) {
+                    $this->disconnectedAt ??= now()->getTimestamp();
                     $failures = time() - $sessionStartedAt >= self::HEALTHY_SESSION_SECONDS ? 1 : $failures + 1;
                     $maxDelay = self::backoffSeconds($failures);
                     $delay = random_int(intdiv($maxDelay, 2), $maxDelay);
@@ -278,6 +283,7 @@ class MasterListenerJob implements ShouldQueue
     private function runSession(string $wsUrl, DerivConnection $connection, ?string $chosenAccountId, bool &$stopping): void
     {
         $socket = $this->openSocket($wsUrl);
+        $this->logReconnectGap();
 
         try {
             $this->setReadTimeout($socket);
@@ -287,6 +293,20 @@ class MasterListenerJob implements ShouldQueue
                 fclose($socket);
             }
         }
+    }
+
+    /** Master trades placed while disconnected are not copied late: a late copy is a different trade. */
+    private function logReconnectGap(): void
+    {
+        if ($this->disconnectedAt === null) {
+            return;
+        }
+
+        $gap = now()->getTimestamp() - $this->disconnectedAt;
+        $from = date('H:i:s', $this->disconnectedAt);
+        $this->disconnectedAt = null;
+
+        Log::warning("MasterListenerJob: connection #{$this->connectionId} reconnected after a gap of {$gap}s (since {$from}); master trades in that window were not copied.");
     }
 
     /**

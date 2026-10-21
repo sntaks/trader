@@ -544,3 +544,50 @@ test('the listener hands over before retry_after', function () {
 
     Bus::assertDispatched(MasterListenerJob::class, fn (MasterListenerJob $job) => $job->connectionId === $master->id);
 });
+
+test('a reconnect logs the gap', function () {
+    Sleep::fake(syncWithCarbon: true);
+    Log::spy();
+    $this->freezeSecond();
+    $failedAt = now();
+    $master = runningMaster();
+    $otpCalls = new ArrayObject;
+    [$job] = listenerOverPair($master->id);
+    onSessionHeartbeats($master->id);
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls, $failedAt) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) === 1) {
+                throw new DerivApiException('session dropped');
+            }
+
+            if (count($otpCalls) > 2) {
+                CopySetting::query()->update(['is_running' => false]);
+
+                throw new DerivApiException('stop');
+            }
+
+            $this->travelTo($failedAt->copy()->addSeconds(12));
+
+            return 'wss://ws.derivws.com/websockets/v3?otp=abc';
+        });
+
+    $job->handle();
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message) => str_contains($message, 'gap of 12s') && str_contains($message, "#{$master->id}"))
+        ->once();
+});
+
+test('a listener that exits removes its heartbeat', function () {
+    $master = DerivConnection::factory()->master()->create(['master_account_id' => 'DOT500']);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => false]);
+    Cache::put(MasterListenerJob::heartbeatKey($master->id), now()->toIso8601String(), 90);
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect(Cache::has(MasterListenerJob::heartbeatKey($master->id)))->toBeFalse();
+});

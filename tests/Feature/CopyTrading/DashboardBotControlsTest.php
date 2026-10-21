@@ -161,3 +161,17 @@ test('startBot queues the listener once', function () {
 
     Bus::assertDispatchedTimes(MasterListenerJob::class, 1);
 });
+
+test('stopping one follower keeps the shared heartbeat', function () {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $master = DerivConnection::factory()->master()->create();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'master_connection_id' => $master->id, 'is_running' => true]);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
+    Cache::put(MasterListenerJob::heartbeatKey($master->id), now()->toIso8601String(), 90);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->call('stopBot');
+
+    expect(Cache::has(MasterListenerJob::heartbeatKey($master->id)))->toBeTrue();
+});

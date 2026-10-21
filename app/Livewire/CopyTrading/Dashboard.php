@@ -460,8 +460,6 @@ class Dashboard extends Component
 
         $setting->update(['is_running' => false]);
 
-        Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
-
         $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
         Redis::setex("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id(), 86400, $currentCount);
     }
@@ -505,7 +503,6 @@ class Dashboard extends Component
 
         if ($this->stopBotOnReset && $isRunning) {
             $setting->update(['is_running' => false]);
-            Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
             $this->paused = false;
             $isRunning = false;
         }
@@ -577,7 +574,6 @@ class Dashboard extends Component
 
         if ($setting->is_running) {
             $setting->update(['is_running' => false]);
-            Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
         }
 
         $setting->update([
