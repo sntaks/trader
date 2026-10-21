@@ -16,6 +16,7 @@ class DerivConnection extends Model
     protected $fillable = [
         'user_id',
         'access_token',
+        'refresh_token',
         'token_type',
         'expires_at',
         'scope',
@@ -23,10 +24,16 @@ class DerivConnection extends Model
         'master_account_id',
     ];
 
+    protected $hidden = [
+        'access_token',
+        'refresh_token',
+    ];
+
     protected function casts(): array
     {
         return [
             'access_token' => 'encrypted',
+            'refresh_token' => 'encrypted',
             'expires_at' => 'datetime',
         ];
     }

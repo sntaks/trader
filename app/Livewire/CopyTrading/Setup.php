@@ -151,6 +151,7 @@ class Setup extends Component
             ['user_id' => auth()->id()],
             [
                 'access_token' => $this->patToken,
+                'refresh_token' => null,
                 'token_type' => $tokenType,
                 'expires_at' => null,
                 'scope' => null,

@@ -4,6 +4,7 @@ use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\DerivRateLimiter;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 test('unauthenticated users are redirected from connect route', function () {
@@ -217,4 +218,44 @@ test('pat connection starts a cooldown when deriv answers 429', function () {
         ->assertSessionHas('error', 'Deriv is busy right now — try again in a minute.');
 
     expect(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBe(now()->addSeconds(45)->timestamp);
+});
+
+test('redirect requests only the configured scopes', function () {
+    $user = User::factory()->create();
+
+    $location = $this->actingAs($user)->get(route('deriv.connect'))->headers->get('Location');
+    parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
+
+    expect($query['scope'])->toBe('trade');
+});
+
+/** Run the OAuth callback with a faked token response. */
+function completeOAuthCallback(User $user, array $tokenResponse): void
+{
+    Http::fake(['auth.deriv.com/oauth2/token' => Http::response($tokenResponse, 200)]);
+
+    test()->actingAs($user)
+        ->withSession(['deriv_oauth_state' => 'state-1', 'deriv_code_verifier' => 'verifier-1'])
+        ->get(route('deriv.callback', ['code' => 'code-1', 'state' => 'state-1']))
+        ->assertRedirect(route('dashboard'));
+}
+
+test('callback stores the refresh token encrypted', function () {
+    $user = User::factory()->create();
+
+    completeOAuthCallback($user, ['access_token' => 'ory_at_1', 'refresh_token' => 'ory_rt_abc', 'expires_in' => 3600]);
+
+    $connection = $user->fresh()->derivConnection;
+
+    expect($connection->refresh_token)->toBe('ory_rt_abc')
+        ->and(DB::table('deriv_connections')->value('refresh_token'))->not->toBe('ory_rt_abc')->not->toBeNull();
+});
+
+test('callback without a refresh token stores null', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id, 'refresh_token' => 'ory_rt_old']);
+
+    completeOAuthCallback($user, ['access_token' => 'ory_at_1', 'expires_in' => 3600]);
+
+    expect($user->fresh()->derivConnection->refresh_token)->toBeNull();
 });

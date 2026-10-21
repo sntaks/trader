@@ -34,7 +34,7 @@ class DerivOAuthController extends Controller
             'response_type' => 'code',
             'client_id' => config('deriv.app_id'),
             'redirect_uri' => config('deriv.redirect_uri'),
-            'scope' => 'trade account_manage',
+            'scope' => config('deriv.oauth_scopes'),
             'state' => $state,
             'code_challenge' => $codeChallenge,
             'code_challenge_method' => 'S256',
@@ -85,6 +85,7 @@ class DerivOAuthController extends Controller
             ['user_id' => $request->user()->id],
             [
                 'access_token' => $response['access_token'],
+                'refresh_token' => $response['refresh_token'] ?? null,
                 'token_type' => $response['token_type'] ?? 'Bearer',
                 'expires_at' => isset($response['expires_in'])
                     ? now()->addSeconds((int) $response['expires_in'])
@@ -136,6 +137,7 @@ class DerivOAuthController extends Controller
             ['user_id' => $request->user()->id],
             [
                 'access_token' => $token,
+                'refresh_token' => null,
                 'token_type' => 'pat',
                 'expires_at' => null,
                 'scope' => null,
