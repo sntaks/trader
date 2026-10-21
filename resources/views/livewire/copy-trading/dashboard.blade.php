@@ -1012,6 +1012,11 @@ $setting = $this->setting;
 
                 {{-- Column visibility toggle (only shown on transactions tab) --}}
                 @if($activeTab === 'transactions')
+                <flux:button wire:click="exportTransactions" wire:loading.attr="disabled" wire:target="exportTransactions"
+                    size="sm" variant="ghost" icon="arrow-down-tray" class="mr-2">
+                    <span wire:loading.remove wire:target="exportTransactions">Export CSV</span>
+                    <span wire:loading wire:target="exportTransactions">Exporting…</span>
+                </flux:button>
                 <div class="relative mr-2" x-data="{ open: false }" @click.outside="open = false">
                     <button @click="open = !open"
                         class="flex items-center gap-1.5 rounded-lg border border-[#1F2937] bg-[#111827] px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
