@@ -13,6 +13,12 @@ use Livewire\Component;
 
 class PlatformDashboard extends Component
 {
+    /** Runs on mount and on every update, so a demoted admin loses access mid-session. */
+    public function boot(): void
+    {
+        abort_unless((bool) auth()->user()?->is_admin, 403);
+    }
+
     #[Computed]
     public function userStats(): array
     {

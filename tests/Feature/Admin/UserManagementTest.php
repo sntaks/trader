@@ -95,3 +95,22 @@ test('deriv connected badge shows for users with connection', function () {
         ->test(UserManagement::class)
         ->assertSee('Connected');
 });
+
+test('non-admin cannot mount user management', function () {
+    Livewire::actingAs(User::factory()->create(['is_admin' => false]))
+        ->test(UserManagement::class)
+        ->assertForbidden();
+});
+
+test('a demoted admin cannot act on an open user management page', function () {
+    $admin = User::factory()->create(['is_admin' => true]);
+    $other = User::factory()->create(['is_admin' => false]);
+
+    $component = Livewire::actingAs($admin)->test(UserManagement::class);
+
+    $admin->forceFill(['is_admin' => false])->save();
+
+    $component->call('toggleAdmin', $other->id)->assertForbidden();
+
+    expect($other->fresh()->is_admin)->toBeFalse();
+});

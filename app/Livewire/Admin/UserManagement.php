@@ -22,6 +22,12 @@ class UserManagement extends Component
 
     public ?string $masterAccountError = null;
 
+    /** Runs on mount and on every update, so a demoted admin loses access mid-session. */
+    public function boot(): void
+    {
+        abort_unless((bool) auth()->user()?->is_admin, 403);
+    }
+
     public function updatedSearch(): void
     {
         $this->resetPage();

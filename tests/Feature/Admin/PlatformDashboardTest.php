@@ -92,3 +92,9 @@ test('signup trend returns 14 data points', function () {
 
     expect($component->instance()->signupTrend)->toHaveCount(14);
 });
+
+test('non-admin cannot mount platform dashboard', function () {
+    Livewire::actingAs(User::factory()->create(['is_admin' => false]))
+        ->test(PlatformDashboard::class)
+        ->assertForbidden();
+});
