@@ -12,3 +12,6 @@ Artisan::command('inspire', function () {
 // This is the self-healing mechanism — if a listener job crashes or the queue
 // worker was restarted, this ensures it comes back within 60 seconds.
 Schedule::command('deriv:ensure-listeners')->everyMinute()->withoutOverlapping();
+
+// Settle copy trades SettleCopyTradeJob could not, e.g. contracts longer than its retries.
+Schedule::command('copy-trades:settle')->everyMinute()->withoutOverlapping(5);

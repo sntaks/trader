@@ -129,6 +129,8 @@
             </div>
         </div>
 
+        <x-deriv-account-select :accounts="$this->selectableAccounts()" />
+
         {{-- Live Balance (from WebSocket) --}}
         @if(! empty($liveBalance))
             <div class="rounded-xl border border-[#22C55E]/30 bg-[#22C55E]/5">
@@ -173,21 +175,15 @@
                                 $accountId   = $account['account_id'] ?? $account['loginid'] ?? '—';
                                 $currency    = strtoupper($account['currency'] ?? '');
                                 $balance     = isset($account['balance']) ? number_format((float)$account['balance'], 2) : null;
-                                $productType = $account['product_type'] ?? 'options';
-                                $isCfd       = $productType === 'cfd';
                             @endphp
                             <div class="flex items-center justify-between px-6 py-4">
                                 <div class="flex items-center gap-3">
-                                    <div @class(['flex h-9 w-9 items-center justify-center rounded-full', 'bg-[#22C55E]/10' => !$isCfd, 'bg-purple-500/10' => $isCfd])>
-                                        @if($isCfd)
-                                            <flux:icon.chart-bar class="size-4 text-purple-500" />
-                                        @else
-                                            <flux:icon.building-library class="size-4 text-[#22C55E]" />
-                                        @endif
+                                    <div class="flex h-9 w-9 items-center justify-center rounded-full bg-[#22C55E]/10">
+                                        <flux:icon.building-library class="size-4 text-[#22C55E]" />
                                     </div>
                                     <div>
                                         <p class="font-mono text-sm font-semibold text-zinc-900 dark:text-white">{{ $accountId }}</p>
-                                        <p class="text-xs text-zinc-500">{{ $account['landing_company_name'] ?? $account['broker'] ?? 'Real' }}</p>
+                                        <p class="text-xs text-zinc-500">Real account</p>
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-3">
@@ -195,11 +191,7 @@
                                         <span class="text-sm font-semibold text-zinc-900 dark:text-white">{{ $balance }}</span>
                                     @endif
                                     <span class="text-sm font-medium text-zinc-500">{{ $currency }}</span>
-                                    @if($isCfd)
-                                        <span class="rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-600 dark:text-purple-400">CFD</span>
-                                    @else
-                                        <span class="rounded-full bg-[#22C55E]/10 px-2.5 py-0.5 text-xs font-medium text-[#22C55E]">Options</span>
-                                    @endif
+                                    <span class="rounded-full bg-[#22C55E]/10 px-2.5 py-0.5 text-xs font-medium text-[#22C55E]">Options</span>
                                 </div>
                             </div>
                         @endforeach
@@ -220,21 +212,15 @@
                                 $accountId   = $account['account_id'] ?? $account['loginid'] ?? '—';
                                 $currency    = strtoupper($account['currency'] ?? '');
                                 $balance     = isset($account['balance']) ? number_format((float)$account['balance'], 2) : null;
-                                $productType = $account['product_type'] ?? 'options';
-                                $isCfd       = $productType === 'cfd';
                             @endphp
                             <div class="flex items-center justify-between px-6 py-4">
                                 <div class="flex items-center gap-3">
                                     <div class="flex h-9 w-9 items-center justify-center rounded-full bg-blue-500/10">
-                                        @if($isCfd)
-                                            <flux:icon.chart-bar class="size-4 text-blue-500" />
-                                        @else
-                                            <flux:icon.beaker class="size-4 text-blue-500" />
-                                        @endif
+                                        <flux:icon.beaker class="size-4 text-blue-500" />
                                     </div>
                                     <div>
                                         <p class="font-mono text-sm font-semibold text-zinc-900 dark:text-white">{{ $accountId }}</p>
-                                        <p class="text-xs text-zinc-500">{{ $isCfd ? 'MT5 demo' : 'Demo account' }}</p>
+                                        <p class="text-xs text-zinc-500">Demo account</p>
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-3">
@@ -242,21 +228,17 @@
                                         <span class="text-sm font-semibold text-zinc-900 dark:text-white">{{ $balance }}</span>
                                     @endif
                                     <span class="text-sm font-medium text-zinc-500">{{ $currency }}</span>
-                                    @if($isCfd)
-                                        <span class="rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-600 dark:text-purple-400">CFD</span>
-                                    @else
-                                        <span class="rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-400">Options</span>
-                                        <flux:button
-                                            wire:click="resetDemoBalance('{{ $accountId }}')"
-                                            wire:confirm="Reset demo balance to $10,000?"
-                                            wire:loading.attr="disabled"
-                                            size="xs"
-                                            variant="ghost"
-                                            icon="arrow-path"
-                                        >
-                                            Reset
-                                        </flux:button>
-                                    @endif
+                                    <span class="rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-600 dark:text-blue-400">Options</span>
+                                    <flux:button
+                                        wire:click="resetDemoBalance('{{ $accountId }}')"
+                                        wire:confirm="Reset demo balance to $10,000?"
+                                        wire:loading.attr="disabled"
+                                        size="xs"
+                                        variant="ghost"
+                                        icon="arrow-path"
+                                    >
+                                        Reset
+                                    </flux:button>
                                 </div>
                             </div>
                         @endforeach

@@ -8,6 +8,8 @@
         </div>
     @else
 
+        <x-deriv-account-select :accounts="$this->selectableAccounts()" />
+
         {{-- Analytics Summary --}}
         @if($this->analytics['total_trades'] > 0)
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">

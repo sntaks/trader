@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Account;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
@@ -10,6 +11,8 @@ use Livewire\Component;
 
 class Overview extends Component
 {
+    use SelectsDerivAccount;
+
     public ?string $apiError = null;
 
     public ?string $resetSuccess = null;
@@ -50,7 +53,7 @@ class Overview extends Component
     }
 
     /**
-     * All accounts (demo + real, options + CFD) merged from REST and WebSocket APIs.
+     * All options accounts (demo + real) from the REST API.
      */
     #[Computed]
     public function accounts(): array
@@ -71,13 +74,7 @@ class Overview extends Component
             $options = [];
         }
 
-        try {
-            $cfds = app(DerivApiService::class)->getCfdAccounts($connection);
-        } catch (DerivApiException) {
-            $cfds = [];
-        }
-
-        return array_merge($options, $cfds);
+        return $options;
     }
 
     /**
@@ -93,8 +90,12 @@ class Overview extends Component
             return [];
         }
 
+        if (! $this->selectedAccountId()) {
+            return [];
+        }
+
         try {
-            return app(DerivApiService::class)->getBalance($connection)['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $this->accountId)['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }
@@ -112,6 +113,11 @@ class Overview extends Component
     public function realAccounts(): array
     {
         return array_values(array_filter($this->accounts, fn ($a) => ! $this->isDemo($a)));
+    }
+
+    protected function resetAccountData(): void
+    {
+        unset($this->balance);
     }
 
     private function isDemo(array $account): bool

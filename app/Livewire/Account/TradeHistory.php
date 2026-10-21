@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Account;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
@@ -10,6 +11,8 @@ use Livewire\Component;
 
 class TradeHistory extends Component
 {
+    use SelectsDerivAccount;
+
     public string $activeTab = 'profit_table';
 
     public int $perPage = 25;
@@ -42,13 +45,13 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getProfitTable($connection, $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId, $this->perPage, $offset);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -61,13 +64,13 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getStatement($connection, $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getStatement($connection, $this->accountId, $this->perPage, $offset);
 
             return $result['statement'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -111,6 +114,12 @@ class TradeHistory extends Component
             'worst_trade' => ! empty($profits) ? min($profits) : 0,
             'avg_stake' => ! empty($stakes) ? array_sum($stakes) / count($stakes) : 0,
         ];
+    }
+
+    protected function resetAccountData(): void
+    {
+        $this->page = 1;
+        unset($this->trades, $this->statement, $this->analytics);
     }
 
     public function render(): View

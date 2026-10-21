@@ -41,7 +41,7 @@ function makeJob(DerivConnection $conn, int $masterConnectionId, array $trade, f
         masterTrade: $trade,
         stake: $stake,
         userId: $conn->user_id,
-        followerAccountId: null,
+        followerAccountId: array_key_exists('followerAccountId', $overrides) ? $overrides['followerAccountId'] : 'DOT100',
         markPatternConsumed: $overrides['markPatternConsumed'] ?? false,
         markWaitTrigger: $overrides['markWaitTrigger'] ?? false,
     );
@@ -86,7 +86,8 @@ test('dispatches SettleCopyTradeJob when contract_id is present', function () us
 
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
-    Bus::assertDispatched(SettleCopyTradeJob::class, fn ($job) => $job->contractId === 'CTR-XYZ');
+    Bus::assertDispatched(SettleCopyTradeJob::class, fn (SettleCopyTradeJob $job) => $job->copyTradeId === CopyTrade::sole()->id
+        && $job->delay === 13);
 });
 
 test('does not dispatch SettleCopyTradeJob when contract_id is absent', function () use ($masterTrade) {
@@ -374,4 +375,50 @@ test('keeps long failure reasons within the column', function () use ($masterTra
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
     expect(mb_strlen(CopyTrade::where('user_id', $followerConn->user_id)->sole()->failure_reason))->toBeLessThanOrEqual(255);
+});
+
+test('places no trade without a follower account', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldNotReceive('buyContract');
+    $mock->shouldNotReceive('accountCurrency');
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['followerAccountId' => null])->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toBe('No follower account selected.');
+});
+
+test('stores the follower account on the copy', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->andReturn(['buy' => ['transaction_id' => 1, 'contract_id' => 'CTR-1']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['followerAccountId' => 'DOT200'])->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole()->follower_account_id)->toBe('DOT200');
+});
+
+test('records when the copy should expire', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+    $this->freezeTime();
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->andReturn(['buy' => ['transaction_id' => 1, 'contract_id' => 'CTR-1']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole()->expires_at->timestamp)->toBe(now()->addSeconds(10)->timestamp);
 });

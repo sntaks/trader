@@ -24,6 +24,7 @@ class CopyTrade extends Model
         'master_connection_id',
         'follower_trx_id',
         'follower_contract_id',
+        'follower_account_id',
         'master_trx_id',
         'master_contract_id',
         'symbol',
@@ -38,6 +39,7 @@ class CopyTrade extends Model
         'status',
         'failure_reason',
         'traded_at',
+        'expires_at',
     ];
 
     /** Defaults that match the column defaults, so freshly created models agree with the database. */
@@ -54,7 +56,40 @@ class CopyTrade extends Model
             'sell_at_market' => 'boolean',
             'is_win' => 'boolean',
             'traded_at' => 'datetime',
+            'expires_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Record a sold contract's result: Deriv's `profit` when present, otherwise `sell_price - buy_price`.
+     * Returns false, leaving the trade open, when the result carries neither.
+     *
+     * @param  array<string, mixed>  $result  A sold `proposal_open_contract` payload or a `profit_table` transaction.
+     */
+    public function settleFrom(array $result): bool
+    {
+        $sellPrice = is_numeric($result['sell_price'] ?? null) ? (float) $result['sell_price'] : null;
+        $buyPrice = is_numeric($result['buy_price'] ?? null) ? (float) $result['buy_price'] : null;
+
+        $profit = match (true) {
+            is_numeric($result['profit'] ?? null) => (float) $result['profit'],
+            $sellPrice !== null && $buyPrice !== null => $sellPrice - $buyPrice,
+            default => null,
+        };
+
+        if ($profit === null) {
+            return false;
+        }
+
+        $profit = round($profit, 2);
+
+        $this->update([
+            'is_win' => $profit > 0,
+            'profit' => $profit,
+            'payout' => $sellPrice,
+        ]);
+
+        return true;
     }
 
     public function user(): BelongsTo

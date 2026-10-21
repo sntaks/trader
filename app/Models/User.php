@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Notifications\Auth\VerifyEmailNotification;
+use App\Services\DerivApiService;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -70,6 +71,20 @@ class User extends Authenticatable implements MustVerifyEmail
     public function copySetting(): HasOne
     {
         return $this->hasOne(CopySetting::class);
+    }
+
+    /**
+     * The account to show by default: the copy setting's follower account when it is listed and active,
+     * otherwise the first active account.
+     *
+     * @param  list<array<string, mixed>>  $accounts  As returned by DerivApiService::getAccounts().
+     */
+    public function preferredDerivAccountId(array $accounts): ?string
+    {
+        $accountIds = array_column(DerivApiService::activeAccounts($accounts), 'account_id');
+        $followerAccountId = $this->copySetting?->follower_account_id;
+
+        return in_array($followerAccountId, $accountIds, true) ? $followerAccountId : ($accountIds[0] ?? null);
     }
 
     public function copyTrades(): HasMany

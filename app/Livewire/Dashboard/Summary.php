@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Dashboard;
 
+use App\Concerns\SelectsDerivAccount;
 use App\Exceptions\DerivApiException;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
@@ -10,17 +11,19 @@ use Livewire\Component;
 
 class Summary extends Component
 {
+    use SelectsDerivAccount;
+
     #[Computed]
     public function balance(): array
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return [];
         }
 
         try {
-            return app(DerivApiService::class)->getBalance($connection)['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $this->accountId)['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }
@@ -31,12 +34,12 @@ class Summary extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired()) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return ['transactions' => [], 'count' => 0];
         }
 
         try {
-            $result = app(DerivApiService::class)->getProfitTable($connection, 20, 0);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId, 20, 0);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -74,6 +77,11 @@ class Summary extends Component
             'pnl' => $pnl,
             'pnl_positive' => $pnl >= 0,
         ];
+    }
+
+    protected function resetAccountData(): void
+    {
+        unset($this->balance, $this->recentProfitTable, $this->performance);
     }
 
     public function render(): View

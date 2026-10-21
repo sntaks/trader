@@ -32,6 +32,7 @@ test('trade history shows profit table transactions', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->once()
         ->andReturn([
@@ -57,6 +58,7 @@ test('trade history computes correct analytics', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->andReturn([
             'profit_table' => [
@@ -84,6 +86,7 @@ test('switching to statement tab shows transactions', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
     $mock->shouldReceive('getStatement')
         ->once()
@@ -110,6 +113,7 @@ test('trade history gracefully handles api failure', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->andThrow(new DerivApiException('API unavailable'));
 
@@ -118,4 +122,73 @@ test('trade history gracefully handles api failure', function () {
     Livewire::actingAs($user)
         ->test(TradeHistory::class)
         ->assertSee('No trades yet');
+});
+
+test('trade history reads the selected account', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([
+        ['account_id' => 'DOT100', 'account_type' => 'demo', 'status' => 'active'],
+        ['account_id' => 'DOT200', 'account_type' => 'real', 'status' => 'active'],
+    ]);
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+    $mock->shouldReceive('getProfitTable')->once()->with(Mockery::any(), 'DOT200', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->set('accountId', 'DOT200')
+        ->assertHasNoErrors()
+        ->assertSet('accountId', 'DOT200');
+});
+
+test('trade history rejects an account the user does not own', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100', 'status' => 'active']]);
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', Mockery::any(), Mockery::any())
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+    $mock->shouldNotReceive('getProfitTable')->with(Mockery::any(), 'DOT999', Mockery::any(), Mockery::any());
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->set('accountId', 'DOT999')
+        ->assertHasErrors('accountId')
+        ->assertSet('accountId', 'DOT100');
+});
+
+test('trade history picks an account once deriv recovers', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $derivUp = false;
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturnUsing(function () use (&$derivUp) {
+        if (! $derivUp) {
+            throw new DerivApiException('Deriv API unreachable');
+        }
+
+        return [['account_id' => 'DOT100', 'status' => 'active']];
+    });
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    $component = Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->assertSet('accountId', null);
+
+    $derivUp = true;
+
+    $component->call('switchTab', 'profit_table')->assertSet('accountId', 'DOT100');
 });
