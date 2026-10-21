@@ -2,6 +2,7 @@
 
 use App\Models\DerivConnection;
 use App\Models\User;
+use App\Services\DerivPatConnector;
 use App\Services\DerivRateLimiter;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -259,3 +260,38 @@ test('callback without a refresh token stores null', function () {
 
     expect($user->fresh()->derivConnection->refresh_token)->toBeNull();
 });
+
+test('pat connection is throttled after five attempts', function () {
+    $user = User::factory()->create();
+    Http::fake(['api.derivws.com/*' => Http::response(null, 401)]);
+
+    foreach (range(1, DerivPatConnector::MAX_ATTEMPTS) as $attempt) {
+        $this->actingAs($user)->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0']);
+    }
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertRedirect(route('account'))
+        ->assertSessionHas('error', fn (string $message) => str_starts_with($message, 'Too many attempts — try again in'));
+
+    Http::assertSentCount(DerivPatConnector::MAX_ATTEMPTS);
+});
+
+test('pat connection rejects a refused token with the rejected message', function () {
+    $user = User::factory()->create();
+    Http::fake(['api.derivws.com/*' => Http::response(null, 401)]);
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertSessionHas('error', DerivPatConnector::REJECTED_MESSAGE);
+});
+
+test('pat connection validation messages come from the form request', function (array $payload, string $field, string $message) {
+    $this->actingAs(User::factory()->create())
+        ->post(route('deriv.connect.pat'), $payload)
+        ->assertSessionHasErrors([$field => $message]);
+})->with([
+    'missing token' => [['pat_token' => ''], 'pat_token', 'Paste your Deriv API token.'],
+    'short token' => [['pat_token' => 'abc'], 'pat_token', 'That token is too short — copy the whole token from Deriv.'],
+    'unknown redirect' => [['pat_token' => 'a1b2c3d4e5f6g7h8i9j0', 'redirect_to' => 'elsewhere'], 'redirect_to', 'The selected redirect to is invalid.'],
+]);

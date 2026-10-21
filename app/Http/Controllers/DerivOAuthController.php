@@ -4,8 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivRateLimitedException;
+use App\Http\Requests\ConnectPatRequest;
 use App\Models\DerivConnection;
-use App\Services\DerivApiService;
+use App\Services\DerivPatConnector;
 use App\Services\DerivTokenRefresher;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\RedirectResponse;
@@ -98,50 +99,25 @@ class DerivOAuthController extends Controller
     }
 
     /**
-     * Store a Personal Access Token (PAT) as a Deriv connection.
-     * Validates the token against the Deriv REST API before saving.
+     * Store a Personal Access Token (PAT) as a Deriv connection once Deriv accepts it.
      */
-    public function connectPat(Request $request, DerivApiService $derivApi): RedirectResponse
+    public function connectPat(ConnectPatRequest $request, DerivPatConnector $connector): RedirectResponse
     {
-        $validated = $request->validate([
-            'pat_token' => ['required', 'string', 'min:10'],
-            'redirect_to' => ['nullable', 'string', 'in:account,copy-trading'],
-        ]);
+        $redirectTo = $request->validated('redirect_to') ?? 'account';
 
-        $token = $validated['pat_token'];
-        $redirectTo = $validated['redirect_to'] ?? 'account';
+        if (($wait = $connector->availableIn($request->user())) > 0) {
+            return redirect()->route($redirectTo)
+                ->with('error', "Too many attempts — try again in {$wait} seconds.");
+        }
 
         try {
-            $response = $derivApi->checkPat($token);
+            $connector->connect($request->user(), $request->validated('pat_token'));
         } catch (DerivRateLimitedException) {
             return redirect()->route($redirectTo)
                 ->with('error', 'Deriv is busy right now — try again in a minute.');
-        } catch (DerivApiException) {
-            return redirect()->route($redirectTo)
-                ->with('error', 'Could not reach Deriv. Please try again.');
+        } catch (DerivApiException $e) {
+            return redirect()->route($redirectTo)->with('error', $e->getMessage());
         }
-
-        if ($response->status() === 401) {
-            return redirect()->route($redirectTo)
-                ->with('error', 'Invalid token. Please check your Personal Access Token and try again.');
-        }
-
-        if ($response->failed()) {
-            $msg = $response->json('errors.0.message', 'Could not verify your token. Please try again.');
-
-            return redirect()->route($redirectTo)->with('error', $msg);
-        }
-
-        DerivConnection::updateOrCreate(
-            ['user_id' => $request->user()->id],
-            [
-                'access_token' => $token,
-                'refresh_token' => null,
-                'token_type' => 'pat',
-                'expires_at' => null,
-                'scope' => null,
-            ]
-        );
 
         return redirect()->route($redirectTo)
             ->with('success', 'Deriv account connected via Personal Access Token.');
