@@ -67,7 +67,7 @@ test('startBot records the start balance of the follower account', function () {
     Bus::fake([MasterListenerJob::class]);
     mock(DerivApiService::class)
         ->shouldReceive('getBalance')
-        ->with(Mockery::type(DerivConnection::class), 'DOT200')
+        ->with(Mockery::type(DerivConnection::class), 'DOT200', Mockery::any(), Mockery::any())
         ->andReturn(['balance' => ['balance' => 250]])
         ->getMock()
         ->shouldIgnoreMissing();
@@ -95,4 +95,39 @@ test('startBot asks for a follower account when none is set', function () {
 
     expect($setting->fresh()->is_running)->toBeFalse();
     Bus::assertNotDispatched(MasterListenerJob::class);
+});
+
+test('the dashboard polls the balance with a two minute max age', function () {
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->with(Mockery::type(DerivConnection::class), 'DOT100', 120)
+        ->atLeast()->once()
+        ->andReturn(['balance' => ['balance' => 321.5]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT100']);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->assertSee('321.50 USD');
+});
+
+test('startBot never records a stale balance as the start balance', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->with(Mockery::type(DerivConnection::class), 'DOT100', 30, false)
+        ->once()
+        ->andReturn(['balance' => ['balance' => 50.0]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT100', 'is_running' => false, 'start_balance' => null]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->call('startBot');
+
+    expect((float) $setting->fresh()->start_balance)->toBe(50.0);
 });

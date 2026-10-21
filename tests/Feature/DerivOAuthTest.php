@@ -2,6 +2,8 @@
 
 use App\Models\DerivConnection;
 use App\Models\User;
+use App\Services\DerivRateLimiter;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 test('unauthenticated users are redirected from connect route', function () {
@@ -187,4 +189,32 @@ test('callback updates existing connection on reconnect', function () {
         ->get(route('deriv.callback', ['code' => 'new-code', 'state' => $state]));
 
     expect($user->derivConnection()->count())->toBe(1);
+});
+
+test('pat connection reports a busy deriv during a cooldown without calling it', function () {
+    $user = User::factory()->create();
+    Http::fake();
+    app(DerivRateLimiter::class)->coolDown(60);
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertRedirect(route('account'))
+        ->assertSessionHas('error', 'Deriv is busy right now — try again in a minute.');
+
+    Http::assertNothingSent();
+    expect($user->hasDerivConnected())->toBeFalse();
+});
+
+test('pat connection starts a cooldown when deriv answers 429', function () {
+    $this->freezeSecond();
+    $user = User::factory()->create();
+    Http::fake([
+        'api.derivws.com/trading/v1/options/accounts' => Http::response(['errors' => [['code' => 'RateLimit', 'message' => 'Too many requests']]], 429, ['Retry-After' => '45']),
+    ]);
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertSessionHas('error', 'Deriv is busy right now — try again in a minute.');
+
+    expect(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBe(now()->addSeconds(45)->timestamp);
 });

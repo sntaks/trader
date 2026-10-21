@@ -5,11 +5,13 @@ namespace App\Jobs;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\DerivRateLimiter;
 use App\Services\MasterStreamProcessor;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Sleep;
 
 class MasterListenerJob implements ShouldQueue
 {
@@ -91,12 +93,12 @@ class MasterListenerJob implements ShouldQueue
             $this->updateHeartbeat();
 
             try {
-                $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId);
+                $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId, DerivRateLimiter::PRIORITY_TRADE);
                 Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}");
                 $this->runSession($wsUrl, $stopping);
             } catch (\Throwable $e) {
                 Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in 5s...");
-                sleep(5);
+                Sleep::for(5)->seconds();
             }
         }
     }

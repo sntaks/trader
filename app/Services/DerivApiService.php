@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -14,8 +16,10 @@ class DerivApiService
     /** New REST API — reliable, no WebSocket needed. */
     private const REST_BASE = 'https://api.derivws.com/trading/v1/options';
 
-    /** Authenticated WebSocket base — OTP appended at runtime. */
-    private const WS_BASE = 'wss://api.derivws.com/trading/v1/options';
+    /** How long a last good read is kept to show while Deriv's rate limit is reached. */
+    private const STALE_TTL_SECONDS = 86400;
+
+    public function __construct(private readonly DerivRateLimiter $rateLimiter) {}
 
     /**
      * Stream context for every Deriv socket: certificates and host names are always verified.
@@ -49,15 +53,11 @@ class DerivApiService
      * Get all accounts (demo + real) for this token.
      * Uses the new REST API — no WebSocket needed.
      */
-    public function getAccounts(DerivConnection $connection): array
+    public function getAccounts(DerivConnection $connection, string $priority = DerivRateLimiter::PRIORITY_READ): array
     {
-        return $this->cachedCall($connection, 'accounts', 3600, function () use ($connection) {
-            try {
-                $response = Http::withHeaders($this->restHeaders($connection->access_token))
-                    ->get(self::REST_BASE.'/accounts');
-            } catch (\Throwable $e) {
-                throw new DerivApiException('Deriv API unreachable: '.$e->getMessage());
-            }
+        return $this->cachedCall($connection, 'accounts', 3600, function () use ($connection, $priority) {
+            $response = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+                ->get(self::REST_BASE.'/accounts'));
 
             if ($response->status() === 401) {
                 throw new DerivApiException('Token expired or invalid. Please reconnect your Deriv account.');
@@ -78,12 +78,8 @@ class DerivApiService
      */
     public function resetDemoBalance(DerivConnection $connection, string $accountId): void
     {
-        try {
-            $response = Http::withHeaders($this->restHeaders($connection->access_token))
-                ->post(self::REST_BASE."/accounts/{$accountId}/reset-demo-balance");
-        } catch (\Throwable $e) {
-            throw new DerivApiException('Deriv API unreachable: '.$e->getMessage());
-        }
+        $response = $this->restRequest($connection, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+            ->post(self::REST_BASE."/accounts/{$accountId}/reset-demo-balance"));
 
         if ($response->status() === 401) {
             throw new DerivApiException('Token expired or invalid. Please reconnect your Deriv account.');
@@ -102,12 +98,32 @@ class DerivApiService
         $this->clearCache($connection);
     }
 
+    /**
+     * Check a Personal Access Token against the accounts endpoint, through the rate limiter. Never cached.
+     *
+     * @throws DerivRateLimitedException When the budget is spent or Deriv answers 429.
+     * @throws DerivApiException When Deriv cannot be reached.
+     */
+    public function checkPat(string $token, string $appId): Response
+    {
+        return $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
+            'Deriv-App-ID' => $appId,
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+        ])->get(self::REST_BASE.'/accounts'));
+    }
+
     // ─── WebSocket API ────────────────────────────────────────────────────────
 
-    /** Get the account's current balance. Cached 30 s. */
-    public function getBalance(DerivConnection $connection, string $accountId): array
+    /**
+     * Get the account's balance, at most $maxAgeSeconds old. Each max age has its own cache entry,
+     * so a caller that needs a fresh balance never receives one cached for a longer-lived caller.
+     * Callers that store the balance pass $allowStale = false, so a throttled read throws instead
+     * of returning the last good value.
+     */
+    public function getBalance(DerivConnection $connection, string $accountId, int $maxAgeSeconds = 30, bool $allowStale = true): array
     {
-        return $this->cachedCall($connection, "{$accountId}:balance", 30, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]));
+        return $this->cachedCall($connection, "{$accountId}:balance:{$maxAgeSeconds}s", $maxAgeSeconds, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]), $allowStale);
     }
 
     /**
@@ -183,7 +199,7 @@ class DerivApiService
      */
     public function accountCurrency(DerivConnection $connection, string $accountId): string
     {
-        $account = collect($this->getAccounts($connection))->firstWhere('account_id', $accountId);
+        $account = collect($this->getAccounts($connection, DerivRateLimiter::PRIORITY_TRADE))->firstWhere('account_id', $accountId);
 
         if (empty($account['currency'])) {
             throw new DerivApiException("Account {$accountId} not found for this connection.");
@@ -236,7 +252,7 @@ class DerivApiService
             throw new DerivApiException('No follower account selected.');
         }
 
-        return $this->wsSession($connection, $accountId, function (Client $client) use ($params): array {
+        return $this->wsSession($connection, $accountId, DerivRateLimiter::PRIORITY_TRADE, function (Client $client) use ($params): array {
             $proposal = [...self::proposalRequest($params), 'req_id' => 1];
 
             Log::debug('buyContract proposal', $proposal);
@@ -271,15 +287,10 @@ class DerivApiService
      * Obtain a pre-authenticated WebSocket URL (OTP) for a specific account.
      * The returned URL requires no further authorization — just connect and send messages.
      */
-    public function getOtpUrl(DerivConnection $connection, string $accountId): string
+    public function getOtpUrl(DerivConnection $connection, string $accountId, string $priority = DerivRateLimiter::PRIORITY_READ): string
     {
-        $headers = $this->restHeaders($connection->access_token);
-
-        try {
-            $otpResp = Http::withHeaders($headers)->post(self::REST_BASE."/accounts/{$accountId}/otp");
-        } catch (\Throwable $e) {
-            throw new DerivApiException('Deriv API unreachable: '.$e->getMessage());
-        }
+        $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+            ->post(self::REST_BASE."/accounts/{$accountId}/otp"));
 
         if ($otpResp->failed()) {
             throw new DerivApiException($otpResp->json('errors.0.message', 'Failed to obtain WebSocket session token'));
@@ -313,9 +324,55 @@ class DerivApiService
         ];
     }
 
-    private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn): array
+    /**
+     * Send one REST request through the rate limiter. A 429 or a `RateLimit` error starts a cooldown for everyone.
+     *
+     * @param  callable(): Response  $send
+     *
+     * @throws DerivApiException
+     */
+    private function restRequest(?DerivConnection $connection, string $priority, callable $send): Response
     {
-        return Cache::remember($this->cacheKey($connection, $key), $ttl, $fn);
+        $this->rateLimiter->acquire($connection, $priority);
+
+        try {
+            $response = $send();
+        } catch (\Throwable $e) {
+            throw new DerivApiException('Deriv API unreachable: '.$e->getMessage());
+        }
+
+        if ($response->status() === 429 || $response->json('errors.0.code') === 'RateLimit') {
+            $retryAfter = $response->header('Retry-After');
+            $this->rateLimiter->coolDown(is_numeric($retryAfter) ? (int) $retryAfter : null);
+
+            throw new DerivRateLimitedException('Deriv rate limit reached — try again shortly.');
+        }
+
+        return $response;
+    }
+
+    /**
+     * Cache a read for $ttl seconds, and keep its last good value for when Deriv's rate limit is reached.
+     * The stale copy outlives clearCache() on purpose; it is served only for a rate-limit refusal.
+     */
+    private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn, bool $allowStale = true): array
+    {
+        $staleKey = "deriv:conn:{$connection->id}:stale:{$key}";
+
+        try {
+            return Cache::remember($this->cacheKey($connection, $key), $ttl, function () use ($fn, $staleKey): array {
+                $value = $fn();
+                Cache::put($staleKey, $value, self::STALE_TTL_SECONDS);
+
+                return $value;
+            });
+        } catch (DerivRateLimitedException $e) {
+            if (! $allowStale) {
+                throw $e;
+            }
+
+            return Cache::get($staleKey) ?? throw $e;
+        }
     }
 
     /** Cache key for one call, under the connection's current version so clearCache() retires all of them at once. */
@@ -333,7 +390,7 @@ class DerivApiService
 
     private function wsCall(DerivConnection $connection, string $accountId, array $request): array
     {
-        return $this->wsSession($connection, $accountId, function (Client $client) use ($request): array {
+        return $this->wsSession($connection, $accountId, DerivRateLimiter::PRIORITY_READ, function (Client $client) use ($request): array {
             $this->wsSend($client, $request);
             $response = $this->wsReceive($client);
 
@@ -350,9 +407,9 @@ class DerivApiService
      *
      * @throws DerivApiException
      */
-    private function wsSession(DerivConnection $connection, string $accountId, callable $fn): array
+    private function wsSession(DerivConnection $connection, string $accountId, string $priority, callable $fn): array
     {
-        $wsUrl = $this->getOtpUrl($connection, $accountId);
+        $wsUrl = $this->getOtpUrl($connection, $accountId, $priority);
         $client = null;
 
         try {
