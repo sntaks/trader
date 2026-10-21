@@ -165,3 +165,30 @@ test('trade history rejects an account the user does not own', function () {
         ->assertHasErrors('accountId')
         ->assertSet('accountId', 'DOT100');
 });
+
+test('trade history picks an account once deriv recovers', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $derivUp = false;
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturnUsing(function () use (&$derivUp) {
+        if (! $derivUp) {
+            throw new DerivApiException('Deriv API unreachable');
+        }
+
+        return [['account_id' => 'DOT100', 'status' => 'active']];
+    });
+    $mock->shouldReceive('getProfitTable')->with(Mockery::any(), 'DOT100', 25, 0)
+        ->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    $component = Livewire::actingAs($user)
+        ->test(TradeHistory::class)
+        ->assertSet('accountId', null);
+
+    $derivUp = true;
+
+    $component->call('switchTab', 'profit_table')->assertSet('accountId', 'DOT100');
+});

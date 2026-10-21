@@ -90,7 +90,7 @@ class Overview extends Component
             return [];
         }
 
-        if (! $this->accountId) {
+        if (! $this->selectedAccountId()) {
             return [];
         }
 

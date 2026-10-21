@@ -50,6 +50,15 @@ trait SelectsDerivAccount
         }
     }
 
+    /**
+     * The selected account, choosing the preferred one first when none is selected yet
+     * (e.g. Deriv was unreachable when the page loaded).
+     */
+    protected function selectedAccountId(): ?string
+    {
+        return $this->accountId ??= auth()->user()->preferredDerivAccountId($this->selectableAccounts());
+    }
+
     /** Forget every computed value that was read from the previously selected account. */
     abstract protected function resetAccountData(): void;
 }

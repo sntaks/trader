@@ -45,7 +45,7 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired() || ! $this->accountId) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return ['transactions' => [], 'count' => 0];
         }
 
@@ -64,7 +64,7 @@ class TradeHistory extends Component
     {
         $connection = auth()->user()->derivConnection;
 
-        if (! $connection || $connection->isExpired() || ! $this->accountId) {
+        if (! $connection || $connection->isExpired() || ! $this->selectedAccountId()) {
             return ['transactions' => [], 'count' => 0];
         }
 
