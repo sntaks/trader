@@ -24,7 +24,9 @@ class CopyTradeJob implements ShouldQueue
     public function __construct(
         public readonly int $masterConnectionId,
         public readonly array $masterTrade,
-    ) {}
+    ) {
+        $this->onQueue('high');
+    }
 
     public function handle(): void
     {
@@ -54,15 +56,6 @@ class CopyTradeJob implements ShouldQueue
 
             if (! $followerConnection || $followerConnection->isExpired()) {
                 continue;
-            }
-
-            // One trade per pattern detection — cleared when master next sells
-            if ($setting->pattern_enabled && ! empty($setting->follower_pattern)) {
-                if ($this->isPatternConsumed($setting->user_id)) {
-                    Log::debug("CopyTradeJob: pattern already consumed for user {$setting->user_id}, waiting for master sell.");
-
-                    continue;
-                }
             }
 
             // Only match against outcomes that arrived after the last trade for this follower,
@@ -96,7 +89,21 @@ class CopyTradeJob implements ShouldQueue
                 continue;
             }
 
-            $stake = $this->calculateStake($setting, $sessionTrades);
+            $stake = $this->fitStopLossBudget($setting, $this->calculateStake($setting, $sessionTrades));
+
+            if ($stake === null) {
+                Log::info("CopyTradeJob: stop-loss budget spent by open trades for user {$setting->user_id}; skipped.");
+
+                continue;
+            }
+
+            $usesPattern = $setting->pattern_enabled && ! empty($setting->follower_pattern);
+
+            if ($usesPattern && ! $this->claimPattern($setting->user_id)) {
+                Log::debug("CopyTradeJob: pattern already consumed for user {$setting->user_id}, waiting for master sell.");
+
+                continue;
+            }
 
             PlaceFollowerTradeJob::dispatch(
                 followerConnectionId: $followerConnection->id,
@@ -105,7 +112,7 @@ class CopyTradeJob implements ShouldQueue
                 stake: $stake,
                 userId: $setting->user_id,
                 followerAccountId: $setting->follower_account_id,
-                markPatternConsumed: $setting->pattern_enabled && ! empty($setting->follower_pattern),
+                markPatternConsumed: $usesPattern,
                 markWaitTrigger: $setting->wait_for_loss > 0 && $setting->only_use_1x_wait_for_loss,
             );
 
@@ -115,17 +122,13 @@ class CopyTradeJob implements ShouldQueue
 
     // ─── Pattern-consumed lock ─────────────────────────────────────────────────
 
-    private function isPatternConsumed(int $userId): bool
+    /**
+     * Atomically take this follower's one-trade-per-pattern lock; false when an earlier master buy already holds it.
+     * Cleared when the master next sells, or by PlaceFollowerTradeJob when the buy fails.
+     */
+    private function claimPattern(int $userId): bool
     {
-        return Cache::has(self::patternConsumedKey($this->masterConnectionId, $userId));
-    }
-
-    private function markPatternConsumed(int $userId): void
-    {
-        Cache::put(self::patternConsumedKey($this->masterConnectionId, $userId), true, now()->addMinutes(10));
-        // Record offset so the ticker resets and shows only outcomes after this trade
-        $len = Redis::llen("master_outcomes:{$this->masterConnectionId}");
-        Redis::setex("master_outcomes_offset:{$this->masterConnectionId}:{$userId}", 600, $len);
+        return Cache::add(self::patternConsumedKey($this->masterConnectionId, $userId), true, now()->addMinutes(10));
     }
 
     public static function clearAllPatternConsumed(int $masterConnectionId): void
@@ -171,6 +174,22 @@ class CopyTradeJob implements ShouldQueue
     }
 
     // ─── Session limits (take_profit / stop_loss / max_martingale stop) ────────
+
+    /**
+     * Cap the stake to the stop-loss budget left after settled losses and open stakes.
+     * Null means the budget is below the Deriv minimum and this trade must be skipped.
+     * PlaceFollowerTradeJob re-checks under a per-user lock, so copies already queued are counted too.
+     */
+    private function fitStopLossBudget(CopySetting $setting, float $stake): ?float
+    {
+        $budget = $setting->stopLossBudget();
+
+        if ($budget === null) {
+            return $stake;
+        }
+
+        return $budget < 0.35 ? null : min($stake, $budget);
+    }
 
     private function isSessionLimitReached(CopySetting $setting, Collection $sessionTrades): bool
     {

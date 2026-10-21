@@ -425,7 +425,7 @@ class Dashboard extends Component
             'stopped_at_profit' => null,
         ]);
 
-        CopyTradeJob::clearAllPatternConsumed($setting->master_connection_id);
+        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
         Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
 
         $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
@@ -541,7 +541,7 @@ class Dashboard extends Component
         $setting->update($updates);
 
         Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        CopyTradeJob::clearAllPatternConsumed($setting->master_connection_id);
+        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
         Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
 
         $this->showResetModal = false;
@@ -606,7 +606,7 @@ class Dashboard extends Component
         $this->paused = false;
 
         Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        CopyTradeJob::clearAllPatternConsumed($setting->master_connection_id);
+        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
         Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
 
         $this->showResetModal = false;
@@ -724,7 +724,7 @@ class Dashboard extends Component
             return [];
         }
 
-        $query = CopyTrade::query()->where('user_id', auth()->id());
+        $query = CopyTrade::query()->where('user_id', auth()->id())->where('status', '!=', CopyTrade::STATUS_FAILED);
 
         if ($setting->session_started_at) {
             $query->where('traded_at', '>=', $setting->session_started_at);
@@ -758,7 +758,7 @@ class Dashboard extends Component
     #[Computed]
     public function stats(): array
     {
-        $query = CopyTrade::query()->where('user_id', auth()->id());
+        $query = CopyTrade::query()->where('user_id', auth()->id())->where('status', '!=', CopyTrade::STATUS_FAILED);
 
         $sessionStart = $this->setting?->session_started_at;
 

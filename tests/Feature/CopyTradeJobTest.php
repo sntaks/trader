@@ -8,6 +8,7 @@ use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\MasterContractParser;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 
 $masterTrade = [
@@ -242,4 +243,125 @@ test('never clamps below the deriv minimum stake', function () use ($masterTrade
     CopyTradeJob::dispatchSync($master->id, $masterTrade);
 
     Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 0.35);
+});
+
+function primePatternOutcomes(int $masterId): void
+{
+    Redis::del("master_outcomes:{$masterId}", "master_outcomes_count:{$masterId}");
+    Redis::lpush("master_outcomes:{$masterId}", 1, 1);
+}
+
+test('overlapping master buys fire a pattern once', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master, ['pattern_enabled' => true, 'follower_pattern' => '11']);
+    primePatternOutcomes($master->id);
+
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'contract_id' => '501']);
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'contract_id' => '502']);
+
+    Bus::assertDispatchedTimes(PlaceFollowerTradeJob::class, 1);
+
+    Redis::del("master_outcomes:{$master->id}");
+});
+
+test('claims the pattern lock at dispatch', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    $setting = makeFollower($master, ['pattern_enabled' => true, 'follower_pattern' => '11']);
+    primePatternOutcomes($master->id);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    expect(Cache::has(CopyTradeJob::patternConsumedKey($master->id, $setting->user_id)))->toBeTrue();
+
+    Redis::del("master_outcomes:{$master->id}");
+});
+
+/** A follower with stop loss 10 that has already lost 5 and has the given stakes still open. */
+function followerWithExposure(DerivConnection $master, array $openStakes, array $overrides = []): CopySetting
+{
+    $setting = makeFollower($master, ['stake' => 3, 'stop_loss' => 10, ...$overrides]);
+    $owner = ['user_id' => $setting->user_id, 'master_connection_id' => $master->id];
+
+    CopyTrade::factory()->create([...$owner, 'stake' => 5, 'profit' => -5, 'traded_at' => now()->subMinutes(5)]);
+
+    foreach ($openStakes as $stake) {
+        CopyTrade::factory()->open()->create([...$owner, 'stake' => $stake]);
+    }
+
+    return $setting;
+}
+
+test('caps the stake to the remaining stop-loss budget', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    followerWithExposure($master, [4]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 1.0);
+});
+
+test('skips but keeps running when the stop-loss budget is spent', function (float $openStake) use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    $setting = followerWithExposure($master, [$openStake]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertNotDispatched(PlaceFollowerTradeJob::class);
+    expect($setting->fresh()->is_running)->toBeTrue();
+})->with([
+    'budget 0' => [5.0],
+    'budget 0.34' => [4.66],
+]);
+
+test('places at the deriv minimum when the budget is exactly 0.35', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    followerWithExposure($master, [4.65]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 0.35);
+});
+
+test('failed attempts do not count as open exposure', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    $setting = followerWithExposure($master, []);
+    CopyTrade::factory()->failed()->create(['user_id' => $setting->user_id, 'master_connection_id' => $master->id, 'stake' => 5]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 3.0);
+});
+
+test('no stop loss means no budget cap', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    followerWithExposure($master, [50], ['stop_loss' => null]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 3.0);
+});
+
+test('follower trades go on the high queue', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->queue === 'high');
 });

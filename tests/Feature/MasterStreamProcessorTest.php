@@ -157,3 +157,12 @@ test('records nothing but still releases pattern locks when the buy price is unk
         ->and(Redis::get('master_outcomes_count:'.STREAM_TEST_CONNECTION_ID))->toBeNull()
         ->and(Cache::has($lockKey))->toBeFalse();
 });
+
+test('copy fan-out goes on the high queue', function () {
+    $processor = new MasterStreamProcessor(STREAM_TEST_CONNECTION_ID);
+    $reqId = $processor->process(streamBuy())[0]['req_id'];
+
+    $processor->process(streamContract($reqId));
+
+    Bus::assertDispatched(CopyTradeJob::class, fn (CopyTradeJob $job) => $job->queue === 'high');
+});
