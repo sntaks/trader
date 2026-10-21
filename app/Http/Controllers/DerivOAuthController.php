@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Http\Requests\ConnectPatRequest;
+use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivPatConnector;
@@ -96,6 +97,13 @@ class DerivOAuthController extends Controller
         );
 
         app(DerivApiService::class)->forgetConnection($connection);
+
+        if (! $connection->canRunUnattended()) {
+            CopySetting::query()
+                ->where('user_id', $connection->user_id)
+                ->where('is_running', true)
+                ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+        }
 
         return redirect()->route('dashboard')
             ->with('success', 'Deriv account connected successfully.');

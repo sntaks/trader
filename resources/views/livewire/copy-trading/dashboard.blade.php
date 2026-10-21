@@ -95,7 +95,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
-                        The Deriv connection this bot copies from has expired or was revoked. Copying has stopped until it is reconnected.
+                        A Deriv connection this bot depends on has expired or was revoked, or is a sign-in that only lasts an hour. Copying has stopped until it is reconnected with an API token.
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">

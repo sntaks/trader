@@ -106,3 +106,30 @@ test('the stop notice explains a disconnect', function () {
         ->assertSee('Deriv Account Disconnected')
         ->assertSee('Your Deriv account was disconnected. Reconnect it to copy trade.');
 });
+
+test('signing in without a refresh token stops the owner\'s running bot', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id, 'token_type' => 'pat', 'expires_at' => null, 'refresh_token' => null]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'is_running' => true]);
+    Http::fake(['auth.deriv.com/oauth2/token' => Http::response(['access_token' => 'ory_at_2', 'expires_in' => 3600])]);
+
+    $this->actingAs($user)
+        ->withSession(['deriv_oauth_state' => 's', 'deriv_code_verifier' => 'v'])
+        ->get(route('deriv.callback', ['code' => 'c', 'state' => 's']));
+
+    expect($setting->fresh()->only('is_running', 'stop_reason'))
+        ->toBe(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+});
+
+test('signing in with a refresh token keeps the owner\'s bot running', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'is_running' => true]);
+    Http::fake(['auth.deriv.com/oauth2/token' => Http::response(['access_token' => 'ory_at_2', 'refresh_token' => 'ory_rt_2', 'expires_in' => 3600])]);
+
+    $this->actingAs($user)
+        ->withSession(['deriv_oauth_state' => 's', 'deriv_code_verifier' => 'v'])
+        ->get(route('deriv.callback', ['code' => 'c', 'state' => 's']));
+
+    expect($setting->fresh()->is_running)->toBeTrue();
+});
