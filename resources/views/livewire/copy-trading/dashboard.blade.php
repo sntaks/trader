@@ -558,7 +558,6 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                 <p class="text-xs text-zinc-500">Your own account is the master</p>
                             @else
                                 <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection?->user?->name }}</p>
-                                <p class="text-xs text-zinc-500">{{ $setting->masterConnection?->user?->email }}</p>
                             @endif
                         </div>
                         <flux:button wire:click="$toggle('showMasterList')" size="sm" variant="ghost" icon="arrows-right-left">

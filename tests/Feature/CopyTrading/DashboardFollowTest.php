@@ -276,3 +276,24 @@ test('saveSettings requires a follower account', function () {
 
     expect($setting->fresh()->follower_account_id)->toBe('DOT100');
 });
+
+function namedMaster(): DerivConnection
+{
+    return DerivConnection::factory()->master()
+        ->for(User::factory()->state(['name' => 'Master Mia', 'email' => 'mia.master@example.test']))
+        ->create();
+}
+
+test('dashboard does not show the masters email', function () {
+    $user = followTestUser();
+    $master = namedMaster();
+    CopySetting::factory()->create(['user_id' => $user->id, 'master_connection_id' => $master->id, 'follower_account_id' => 'DOT100']);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->set('settingsOpen', true)
+        ->assertSee('Master Mia')
+        ->assertDontSee('mia.master@example.test')
+        ->set('showMasterList', true)
+        ->assertDontSee('mia.master@example.test');
+});
