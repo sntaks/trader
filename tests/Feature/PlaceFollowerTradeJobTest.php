@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Jobs\CopyTradeJob;
 use App\Jobs\PlaceFollowerTradeJob;
 use App\Jobs\SettleCopyTradeJob;
 use App\Models\CopyTrade;
@@ -9,6 +10,7 @@ use App\Models\User;
 use App\Services\DerivApiService;
 use App\Services\MasterContractParser;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 
 $masterTrade = [
     'contract_id' => '222222',
@@ -284,4 +286,35 @@ test('existing rows count as placed', function () {
     $trade = CopyTrade::create(['user_id' => $followerConn->user_id, 'master_connection_id' => $masterConn->id]);
 
     expect($trade->fresh()->status)->toBe(CopyTrade::STATUS_PLACED);
+});
+
+test('a failed buy releases the pattern lock', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+    $lockKey = CopyTradeJob::patternConsumedKey($masterConn->id, $followerConn->user_id);
+    Cache::put($lockKey, true, 600);
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andThrow(new DerivApiException('Insufficient balance.'));
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['markPatternConsumed' => true])->handle(app(DerivApiService::class));
+
+    expect(Cache::has($lockKey))->toBeFalse();
+});
+
+test('a placed buy keeps the pattern lock', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+    $lockKey = CopyTradeJob::patternConsumedKey($masterConn->id, $followerConn->user_id);
+    Cache::put($lockKey, true, 600);
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andReturn(['buy' => ['transaction_id' => 1, 'contract_id' => 'C1']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['markPatternConsumed' => true])->handle(app(DerivApiService::class));
+
+    expect(Cache::has($lockKey))->toBeTrue();
 });

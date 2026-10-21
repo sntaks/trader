@@ -56,15 +56,6 @@ class CopyTradeJob implements ShouldQueue
                 continue;
             }
 
-            // One trade per pattern detection — cleared when master next sells
-            if ($setting->pattern_enabled && ! empty($setting->follower_pattern)) {
-                if ($this->isPatternConsumed($setting->user_id)) {
-                    Log::debug("CopyTradeJob: pattern already consumed for user {$setting->user_id}, waiting for master sell.");
-
-                    continue;
-                }
-            }
-
             // Only match against outcomes that arrived after the last trade for this follower,
             // so that consumed outcomes from a previous cycle cannot contribute to the next one.
             $outcomesForPattern = $this->getFreshOutcomes($recentOutcomes, $setting);
@@ -98,6 +89,14 @@ class CopyTradeJob implements ShouldQueue
 
             $stake = $this->calculateStake($setting, $sessionTrades);
 
+            $usesPattern = $setting->pattern_enabled && ! empty($setting->follower_pattern);
+
+            if ($usesPattern && ! $this->claimPattern($setting->user_id)) {
+                Log::debug("CopyTradeJob: pattern already consumed for user {$setting->user_id}, waiting for master sell.");
+
+                continue;
+            }
+
             PlaceFollowerTradeJob::dispatch(
                 followerConnectionId: $followerConnection->id,
                 masterConnectionId: $this->masterConnectionId,
@@ -105,7 +104,7 @@ class CopyTradeJob implements ShouldQueue
                 stake: $stake,
                 userId: $setting->user_id,
                 followerAccountId: $setting->follower_account_id,
-                markPatternConsumed: $setting->pattern_enabled && ! empty($setting->follower_pattern),
+                markPatternConsumed: $usesPattern,
                 markWaitTrigger: $setting->wait_for_loss > 0 && $setting->only_use_1x_wait_for_loss,
             );
 
@@ -115,17 +114,13 @@ class CopyTradeJob implements ShouldQueue
 
     // ─── Pattern-consumed lock ─────────────────────────────────────────────────
 
-    private function isPatternConsumed(int $userId): bool
+    /**
+     * Atomically take this follower's one-trade-per-pattern lock; false when an earlier master buy already holds it.
+     * Cleared when the master next sells, or by PlaceFollowerTradeJob when the buy fails.
+     */
+    private function claimPattern(int $userId): bool
     {
-        return Cache::has(self::patternConsumedKey($this->masterConnectionId, $userId));
-    }
-
-    private function markPatternConsumed(int $userId): void
-    {
-        Cache::put(self::patternConsumedKey($this->masterConnectionId, $userId), true, now()->addMinutes(10));
-        // Record offset so the ticker resets and shows only outcomes after this trade
-        $len = Redis::llen("master_outcomes:{$this->masterConnectionId}");
-        Redis::setex("master_outcomes_offset:{$this->masterConnectionId}:{$userId}", 600, $len);
+        return Cache::add(self::patternConsumedKey($this->masterConnectionId, $userId), true, now()->addMinutes(10));
     }
 
     public static function clearAllPatternConsumed(int $masterConnectionId): void

@@ -8,6 +8,7 @@ use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\MasterContractParser;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 
 $masterTrade = [
@@ -242,4 +243,39 @@ test('never clamps below the deriv minimum stake', function () use ($masterTrade
     CopyTradeJob::dispatchSync($master->id, $masterTrade);
 
     Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 0.35);
+});
+
+function primePatternOutcomes(int $masterId): void
+{
+    Redis::del("master_outcomes:{$masterId}", "master_outcomes_count:{$masterId}");
+    Redis::lpush("master_outcomes:{$masterId}", 1, 1);
+}
+
+test('overlapping master buys fire a pattern once', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master, ['pattern_enabled' => true, 'follower_pattern' => '11']);
+    primePatternOutcomes($master->id);
+
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'contract_id' => '501']);
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'contract_id' => '502']);
+
+    Bus::assertDispatchedTimes(PlaceFollowerTradeJob::class, 1);
+
+    Redis::del("master_outcomes:{$master->id}");
+});
+
+test('claims the pattern lock at dispatch', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    $setting = makeFollower($master, ['pattern_enabled' => true, 'follower_pattern' => '11']);
+    primePatternOutcomes($master->id);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    expect(Cache::has(CopyTradeJob::patternConsumedKey($master->id, $setting->user_id)))->toBeTrue();
+
+    Redis::del("master_outcomes:{$master->id}");
 });

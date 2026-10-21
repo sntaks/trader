@@ -92,7 +92,6 @@ class PlaceFollowerTradeJob implements ShouldQueue
             ]);
 
             if ($this->markPatternConsumed) {
-                Cache::put(CopyTradeJob::patternConsumedKey($this->masterConnectionId, $this->userId), true, now()->addMinutes(10));
                 $count = (int) (Redis::get("master_outcomes_count:{$this->masterConnectionId}") ?? 0);
                 Redis::setex("master_outcomes_offset:{$this->masterConnectionId}:{$this->userId}", 86400, $count);
             }
@@ -147,5 +146,9 @@ class PlaceFollowerTradeJob implements ShouldQueue
             'status' => CopyTrade::STATUS_FAILED,
             'failure_reason' => Str::limit($reason, 255),
         ]);
+
+        if ($this->markPatternConsumed) {
+            Cache::forget(CopyTradeJob::patternConsumedKey($this->masterConnectionId, $this->userId));
+        }
     }
 }
