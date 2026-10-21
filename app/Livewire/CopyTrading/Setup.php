@@ -3,10 +3,12 @@
 namespace App\Livewire\CopyTrading;
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivLegacyApiService;
+use App\Services\DerivRateLimiter;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
@@ -128,7 +130,13 @@ class Setup extends Component
         $this->validate(['patToken' => ['required', 'string', 'min:10']]);
 
         // Try the new REST API first (works for new-style PATs).
-        $tokenType = $this->tryNewRestApi($this->patToken);
+        try {
+            $tokenType = $this->tryNewRestApi($this->patToken);
+        } catch (DerivRateLimitedException) {
+            $this->patError = 'Deriv is busy right now — try again in a minute.';
+
+            return;
+        }
 
         // If the new REST API rejects it, fall back to the legacy WebSocket API.
         if ($tokenType === null) {
@@ -159,10 +167,14 @@ class Setup extends Component
 
     /**
      * Try validating the PAT against the new REST API.
-     * Returns 'pat' on success, null on 401/failure, throws on network error.
+     * Returns 'pat' on success, null on 401/failure. Counts against the Deriv rate limit.
+     *
+     * @throws DerivRateLimitedException When the budget is spent, so the token is not misjudged as legacy.
      */
     private function tryNewRestApi(string $token): ?string
     {
+        app(DerivRateLimiter::class)->acquire(null, DerivRateLimiter::PRIORITY_READ);
+
         try {
             $response = Http::withHeaders([
                 'Deriv-App-ID' => (string) config('deriv.app_id_pat'),

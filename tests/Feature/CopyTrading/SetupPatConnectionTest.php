@@ -5,8 +5,10 @@ use App\Livewire\CopyTrading\Setup;
 use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\DerivLegacyApiService;
+use App\Services\DerivRateLimiter;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+
 use function Pest\Laravel\mock;
 
 test('setup shows deriv connection prompt when no account connected', function () {
@@ -151,10 +153,26 @@ test('followerAccounts uses legacy service for pat_legacy connections', function
     mock(DerivLegacyApiService::class)
         ->shouldReceive('getAccounts')
         ->once()
-        ->with(\Mockery::on(fn ($c) => $c->id === $connection->id))
+        ->with(Mockery::on(fn ($c) => $c->id === $connection->id))
         ->andReturn($accounts);
 
     $component = Livewire::actingAs($user)->test(Setup::class);
 
     expect($component->instance()->followerAccounts)->toBe($accounts);
+});
+
+test('pat connect reports a busy deriv instead of trying the legacy api', function () {
+    $user = User::factory()->create();
+    Http::fake(['api.derivws.com/*' => Http::response(['data' => []], 200)]);
+    mock(DerivLegacyApiService::class)->shouldNotReceive('authorize');
+    app(DerivRateLimiter::class)->coolDown(60);
+
+    Livewire::actingAs($user)
+        ->test(Setup::class)
+        ->set('patToken', 'validtoken12345')
+        ->call('connectViaPat')
+        ->assertSet('patError', 'Deriv is busy right now — try again in a minute.');
+
+    Http::assertNothingSent();
+    expect(DerivConnection::query()->where('user_id', $user->id)->exists())->toBeFalse();
 });
