@@ -406,8 +406,14 @@ class Dashboard extends Component
         $derivConnection = auth()->user()->derivConnection;
 
         if ($setting->start_balance === null && $derivConnection) {
-            $derivApi = app(DerivApiService::class);
-            $balance = $derivApi->getBalance($derivConnection);
+            try {
+                $balance = app(DerivApiService::class)->getBalance($derivConnection);
+            } catch (DerivApiException $e) {
+                $this->addError('bot', $e->getMessage());
+
+                return;
+            }
+
             $setting->update(['start_balance' => $balance['balance']['balance'] ?? null]);
         }
 

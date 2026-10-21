@@ -493,6 +493,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
             </div>
         </div>
 
+        @error('bot') <p class="text-xs text-red-500">{{ $message }}</p> @enderror
+
         {{-- ===== LISTENER STATUS + MASTER OUTCOMES TICKER + SLAVE PATTERN ===== --}}
         <div class="flex flex-wrap items-start gap-4">
             @if($setting->is_running)
