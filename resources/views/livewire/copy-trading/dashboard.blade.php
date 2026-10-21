@@ -1,9 +1,12 @@
 @php
 $setting = $this->setting;
 @endphp
+{{-- x-data must render identically every time: a changed x-data makes Alpine rebuild the timer's state on each poll. --}}
 <div class="space-y-6" wire:poll.15s
-    x-data="{ runSeconds: 0, clockOffset: {{ now()->timestamp }} - Math.floor(Date.now() / 1000), timer: null, destroy() { clearInterval(this.timer) } }"
+    x-data="{ runSeconds: 0, clockOffset: 0, timer: null, destroy() { clearInterval(this.timer) } }"
+    data-server-now="{{ now()->timestamp }}"
     x-init="
+        clockOffset = Number($el.dataset.serverNow) - Math.floor(Date.now() / 1000);
         const tick = () => {
             runSeconds = $wire.runStartedAt
                 ? Math.max(0, Math.floor(Date.now() / 1000) + clockOffset - $wire.runStartedAt)
@@ -505,7 +508,7 @@ $setting = $this->setting;
                 @if($setting->is_running)
                     <span class="text-xs text-zinc-400">
                         Running:
-                        <span x-text="new Date(runSeconds * 1000).toISOString().substr(11, 8)" class="font-mono text-[#CDF12B]">00:00:00</span>
+                        <span x-text="String(Math.floor(runSeconds / 3600)).padStart(2, '0') + ':' + String(Math.floor(runSeconds % 3600 / 60)).padStart(2, '0') + ':' + String(runSeconds % 60).padStart(2, '0')" class="font-mono text-[#CDF12B]">00:00:00</span>
                     </span>
                 @endif
 

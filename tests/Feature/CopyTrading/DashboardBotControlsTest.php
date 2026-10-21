@@ -227,3 +227,29 @@ test('the run start cannot be set from the browser', function () {
     expect(fn () => Livewire::actingAs($setting->user)->test(Dashboard::class)->set('runStartedAt', 1))
         ->toThrow(CannotUpdateLockedPropertyException::class);
 });
+
+/** The root element's x-data, which must not change between renders or Alpine rebuilds the timer's state. */
+function dashboardRootXData(string $html): ?string
+{
+    return preg_match('/wire:poll\.15s\s+x-data="([^"]*)"/', $html, $matches) ? $matches[1] : null;
+}
+
+test('the timer state survives a re-render', function () {
+    $setting = runningDashboardSetting();
+    $component = Livewire::actingAs($setting->user)->test(Dashboard::class);
+    $before = dashboardRootXData($component->html());
+
+    $this->travel(5)->seconds();
+    $component->call('$refresh');
+
+    expect($before)->not->toBeNull()
+        ->and(dashboardRootXData($component->html()))->toBe($before);
+});
+
+test('the timer shows hours past a day instead of wrapping', function () {
+    $setting = runningDashboardSetting();
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)
+        ->assertDontSeeHtml('toISOString().substr(11, 8)')
+        ->assertSeeHtml('Math.floor(runSeconds / 3600)');
+});
