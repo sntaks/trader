@@ -131,3 +131,47 @@ test('startBot never records a stale balance as the start balance', function () 
 
     expect((float) $setting->fresh()->start_balance)->toBe(50.0);
 });
+
+test('the dashboard explains a reauth stop', function () {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)
+        ->assertSee('Deriv Connection Lost')
+        ->assertSee('has expired or was revoked');
+});
+
+test('startBot queues the listener once', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->andReturn(['balance' => ['balance' => 100]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT100', 'is_running' => false]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)
+        ->call('startBot')
+        ->call('stopBot')
+        ->call('startBot');
+
+    Bus::assertDispatchedTimes(MasterListenerJob::class, 1);
+});
+
+test('stopping one follower keeps the shared heartbeat', function () {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $master = DerivConnection::factory()->master()->create();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'master_connection_id' => $master->id, 'is_running' => true]);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
+    Cache::put(MasterListenerJob::heartbeatKey($master->id), now()->toIso8601String(), 90);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->call('stopBot');
+
+    expect(Cache::has(MasterListenerJob::heartbeatKey($master->id)))->toBeTrue();
+});

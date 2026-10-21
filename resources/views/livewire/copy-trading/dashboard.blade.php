@@ -39,6 +39,14 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <h3 class="text-lg font-bold text-red-400">Stop Loss Reached</h3>
                         <p class="text-xs text-zinc-400">Trading stopped automatically</p>
                     </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                        <flux:icon.link-slash class="size-6 text-amber-400" />
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-amber-400">Deriv Connection Lost</h3>
+                        <p class="text-xs text-zinc-400">Trading stopped automatically</p>
+                    </div>
                 @else
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
                         <flux:icon.exclamation-triangle class="size-6 text-amber-400" />
@@ -76,6 +84,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 @elseif($sr['reason'] === 'stop_loss' && $sr['stop_loss_target'])
                     <div class="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-sm text-red-400">
                         Loss limit of <strong>{{ number_format($sr['stop_loss_target'], 2) }} USD</strong> reached. Bot has stopped to protect your balance.
+                    </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
+                    <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+                        The Deriv connection this bot copies from has expired or was revoked. Copying has stopped until it is reconnected.
                     </div>
                 @else
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">

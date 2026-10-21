@@ -106,3 +106,22 @@ test('a rejected reset says why next to the reset buttons', function () {
         ->assertHasErrors('stake')
         ->assertSee('Some settings are invalid. Open More Settings to fix them.');
 });
+
+test('saveSettings never stores an own-account choice on a master follow', function () {
+    mock(DerivApiService::class)
+        ->shouldReceive('getAccounts')
+        ->andReturn([['account_id' => 'DOT100', 'currency' => 'USD'], ['account_id' => 'DOT200', 'currency' => 'USD']])
+        ->getMock()
+        ->shouldIgnoreMissing();
+    $setting = settingsTestSetting();
+
+    expect($setting->masterConnection->isMaster())->toBeTrue();
+
+    Livewire::actingAs($setting->user)
+        ->test(Dashboard::class)
+        ->call('enterOwnAccountMode')
+        ->set('masterAccountId', 'DOT200')
+        ->call('saveSettings');
+
+    expect($setting->fresh()->master_account_id)->toBeNull();
+});

@@ -366,7 +366,9 @@ class Dashboard extends Component
 
         $this->validate(['followerAccountId' => ['required', 'in:'.implode(',', $validAccountIds)]]);
 
-        if ($this->ownAccountMode) {
+        $isOwnAccountSetting = $setting->master_connection_id === auth()->user()->derivConnection?->id;
+
+        if ($isOwnAccountSetting) {
             $this->validate(
                 ['masterAccountId' => ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
                 ['masterAccountId.different' => 'The master account must differ from the account you copy into.'],
@@ -374,7 +376,7 @@ class Dashboard extends Component
         }
 
         $setting->update([
-            'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
+            'master_account_id' => $isOwnAccountSetting ? $this->masterAccountId : null,
             'stake' => $this->stake,
             'follow_master_stake' => $this->followMasterStake,
             'safe_mode' => $this->safeMode,
@@ -443,7 +445,7 @@ class Dashboard extends Component
         $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
         Redis::setex("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id(), 86400, $currentCount);
 
-        MasterListenerJob::dispatch($setting->master_connection_id);
+        MasterListenerJob::dispatchOnce($setting->master_connection_id);
 
         $this->paused = false;
     }
@@ -457,8 +459,6 @@ class Dashboard extends Component
         }
 
         $setting->update(['is_running' => false]);
-
-        Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
 
         $currentCount = (int) (Redis::get("master_outcomes_count:{$setting->master_connection_id}") ?? 0);
         Redis::setex("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id(), 86400, $currentCount);
@@ -503,7 +503,6 @@ class Dashboard extends Component
 
         if ($this->stopBotOnReset && $isRunning) {
             $setting->update(['is_running' => false]);
-            Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
             $this->paused = false;
             $isRunning = false;
         }
@@ -575,7 +574,6 @@ class Dashboard extends Component
 
         if ($setting->is_running) {
             $setting->update(['is_running' => false]);
-            Cache::forget(MasterListenerJob::heartbeatKey($setting->master_connection_id));
         }
 
         $setting->update([

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivAuthException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
 use Illuminate\Http\Client\Response;
@@ -60,7 +61,7 @@ class DerivApiService
                 ->get(self::REST_BASE.'/accounts'));
 
             if ($response->status() === 401) {
-                throw new DerivApiException('Token expired or invalid. Please reconnect your Deriv account.');
+                throw new DerivAuthException('Token expired or invalid. Please reconnect your Deriv account.');
             }
 
             if ($response->failed()) {
@@ -291,6 +292,10 @@ class DerivApiService
     {
         $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
             ->post(self::REST_BASE."/accounts/{$accountId}/otp"));
+
+        if ($otpResp->status() === 401) {
+            throw new DerivAuthException($otpResp->json('errors.0.message', 'Token expired or invalid. Please reconnect your Deriv account.'));
+        }
 
         if ($otpResp->failed()) {
             throw new DerivApiException($otpResp->json('errors.0.message', 'Failed to obtain WebSocket session token'));
