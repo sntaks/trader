@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 
@@ -90,13 +91,20 @@ class User extends Authenticatable implements MustVerifyEmail
 
     /**
      * Lock out whoever set up this account before its email was verified: a Google sign-in proved
-     * the mailbox belongs to someone else. Clears the password and two-factor setup, rotates the
-     * remember token and ends every stored session. The owner can set a password via "Forgot password".
+     * the mailbox belongs to someone else. Replaces the password with a random one nobody knows,
+     * clears two-factor, rotates the remember token, ends every stored session, and removes the Deriv
+     * connection and copy setting they attached; trade history stays. The password gets a random hash
+     * rather than null because AuthenticateSession skips users without one, and the changed hash is
+     * what logs out other sessions under any session driver. The owner can set a password via
+     * "Forgot password".
      */
     public function secureAfterTakeover(): void
     {
+        $this->derivConnection?->disconnect();
+        $this->copySetting()->delete();
+
         $this->forceFill([
-            'password' => null,
+            'password' => Hash::make(Str::random(64)),
             'two_factor_secret' => null,
             'two_factor_recovery_codes' => null,
             'two_factor_confirmed_at' => null,

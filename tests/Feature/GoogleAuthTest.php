@@ -1,11 +1,15 @@
 <?php
 
 use App\Http\Controllers\Auth\GoogleAuthController;
+use App\Models\CopySetting;
+use App\Models\CopyTrade;
+use App\Models\DerivConnection;
 use App\Models\User;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Psr7\Request as GuzzleRequest;
 use GuzzleHttp\Psr7\Response as GuzzleResponse;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
 use Laravel\Socialite\Contracts\Provider;
 use Laravel\Socialite\Two\InvalidStateException;
@@ -143,7 +147,8 @@ test('linking to an unverified password account wipes its password, two-factor a
 
     $existing->refresh();
 
-    expect($existing->password)->toBeNull()
+    expect($existing->password)->not->toBeNull()
+        ->and(Hash::check('attacker-password', $existing->password))->toBeFalse()
         ->and($existing->two_factor_secret)->toBeNull()
         ->and($existing->two_factor_recovery_codes)->toBeNull()
         ->and($existing->two_factor_confirmed_at)->toBeNull()
@@ -260,4 +265,41 @@ test('a google user who passes the challenge is signed in', function () {
     $this->post(route('two-factor.login.store'), ['recovery_code' => 'recovery-code-1'])->assertRedirect();
 
     $this->assertAuthenticatedAs($user);
+});
+
+test('a takeover disconnects the pre-registrant\'s deriv account and copy setting', function () {
+    $existing = User::factory()->unverified()->create(['email' => 'google@example.com', 'google_id' => null]);
+    $connection = DerivConnection::factory()->create(['user_id' => $existing->id]);
+    CopySetting::factory()->create(['user_id' => $existing->id, 'master_connection_id' => $connection->id]);
+    CopyTrade::factory()->create(['user_id' => $existing->id, 'master_connection_id' => $connection->id]);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'));
+
+    expect(DerivConnection::query()->where('user_id', $existing->id)->exists())->toBeFalse()
+        ->and(CopySetting::query()->where('user_id', $existing->id)->exists())->toBeFalse()
+        ->and(CopyTrade::query()->where('user_id', $existing->id)->count())->toBe(1);
+});
+
+test('a takeover stops followers of the pre-registrant\'s master', function () {
+    $existing = User::factory()->unverified()->create(['email' => 'google@example.com', 'google_id' => null]);
+    $master = DerivConnection::factory()->master()->create(['user_id' => $existing->id]);
+    $follower = CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'));
+
+    expect($follower->fresh()->only('is_running', 'stop_reason'))
+        ->toBe(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_MASTER_DISCONNECTED]);
+});
+
+test('a takeover logs out the pre-registrant\'s other session under any driver', function () {
+    config(['session.driver' => 'array']);
+    $attacker = User::factory()->unverified()->create(['password' => 'attacker-password']);
+
+    $this->actingAs($attacker)->get(route('profile.edit'))->assertOk();
+
+    $attacker->secureAfterTakeover();
+
+    $this->get(route('profile.edit'))->assertRedirect(route('login'));
 });
