@@ -24,6 +24,11 @@ class MasterListenerJob implements ShouldQueue
     /** Single attempt; the scheduler restarts it if it dies. */
     public int $tries = 1;
 
+    /** POSIX signal numbers; Windows PHP has no SIGTERM/SIGINT constants. */
+    private const SIGTERM = 15;
+
+    private const SIGINT = 2;
+
     /** Seconds a read waits before the idle tick (heartbeat, stop check, ping). */
     protected float $readTimeoutSeconds = 30.0;
 
@@ -73,38 +78,87 @@ class MasterListenerJob implements ShouldQueue
         Log::info("MasterListenerJob starting for connection #{$this->connectionId}, account {$masterAccountId}");
 
         $stopping = false;
+        $workerHandlers = $this->chainStopSignals($stopping);
 
-        if (extension_loaded('pcntl')) {
-            pcntl_async_signals(true);
-            pcntl_signal(SIGTERM, function () use (&$stopping) {
+        try {
+            // Self-healing loop: reconnects automatically if the WebSocket drops or
+            // Deriv closes the session. Exits only when there are no active followers.
+            while (! $stopping) {
+                if (! $this->hasActiveFollowers()) {
+                    Log::info("MasterListenerJob: no active followers for connection #{$this->connectionId} — exiting.");
+
+                    return;
+                }
+
+                $connection = $connection->fresh() ?? $connection;
+                $this->updateHeartbeat();
+
+                try {
+                    $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId, DerivRateLimiter::PRIORITY_TRADE);
+                    Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}");
+                    $this->runSession($wsUrl, $stopping);
+                } catch (\Throwable $e) {
+                    Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in 5s...");
+
+                    if (! $stopping) {
+                        Sleep::for(5)->seconds();
+                    }
+                }
+            }
+        } finally {
+            foreach ($workerHandlers as $signal => $handler) {
+                $this->installSignalHandler($signal, $handler);
+            }
+        }
+    }
+
+    // ─── Signals ──────────────────────────────────────────────────────────────
+
+    /**
+     * Stop the loop on SIGTERM/SIGINT while still running the queue worker's own handlers,
+     * so the worker also learns it must quit once this job returns.
+     *
+     * @return array<int, mixed> The handlers that were installed before, by signal, to restore later.
+     */
+    private function chainStopSignals(bool &$stopping): array
+    {
+        if (! $this->supportsSignals()) {
+            return [];
+        }
+
+        $workerHandlers = [];
+
+        foreach ([self::SIGTERM, self::SIGINT] as $signal) {
+            $workerHandler = $this->signalHandler($signal);
+            $workerHandlers[$signal] = $workerHandler;
+
+            $this->installSignalHandler($signal, function (int $signo, mixed $info = null) use (&$stopping, $workerHandler): void {
                 $stopping = true;
-            });
-            pcntl_signal(SIGINT, function () use (&$stopping) {
-                $stopping = true;
+
+                if (is_callable($workerHandler)) {
+                    $workerHandler($signo, $info);
+                }
             });
         }
 
-        // Self-healing loop: reconnects automatically if the WebSocket drops or
-        // Deriv closes the session. Exits only when there are no active followers.
-        while (! $stopping) {
-            if (! $this->hasActiveFollowers()) {
-                Log::info("MasterListenerJob: no active followers for connection #{$this->connectionId} — exiting.");
+        return $workerHandlers;
+    }
 
-                return;
-            }
+    protected function supportsSignals(): bool
+    {
+        return extension_loaded('pcntl');
+    }
 
-            $connection = $connection->fresh() ?? $connection;
-            $this->updateHeartbeat();
+    protected function signalHandler(int $signal): mixed
+    {
+        return pcntl_signal_get_handler($signal);
+    }
 
-            try {
-                $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId, DerivRateLimiter::PRIORITY_TRADE);
-                Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}");
-                $this->runSession($wsUrl, $stopping);
-            } catch (\Throwable $e) {
-                Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in 5s...");
-                Sleep::for(5)->seconds();
-            }
-        }
+    /** @param  callable|int  $handler  A closure, or SIG_DFL / SIG_IGN as returned by signalHandler(). */
+    protected function installSignalHandler(int $signal, mixed $handler): void
+    {
+        pcntl_async_signals(true);
+        pcntl_signal($signal, $handler);
     }
 
     // ─── WebSocket session ─────────────────────────────────────────────────────

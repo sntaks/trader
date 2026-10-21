@@ -220,3 +220,90 @@ test('a handshake without 101 fails the session', function () {
 
     Log::shouldHaveReceived('warning')->withArgs(fn (string $message) => str_contains($message, 'session ended') && str_contains($message, '403'));
 });
+
+/**
+ * A listener that believes pcntl is loaded: it reports $previous as the worker's handler for every
+ * signal and records each handler it installs as [signal, handler].
+ */
+function listenerWithSignals(int $connectionId, ArrayObject $installs, Closure $previous): MasterListenerJob
+{
+    return new class($connectionId, $installs, $previous) extends MasterListenerJob
+    {
+        public function __construct(int $connectionId, private ArrayObject $installs, private Closure $previous)
+        {
+            parent::__construct($connectionId);
+        }
+
+        protected function supportsSignals(): bool
+        {
+            return true;
+        }
+
+        protected function signalHandler(int $signal): mixed
+        {
+            return $this->previous;
+        }
+
+        protected function installSignalHandler(int $signal, mixed $handler): void
+        {
+            $this->installs[] = [$signal, $handler];
+        }
+    };
+}
+
+test('the worker\'s handler still runs on SIGTERM', function () {
+    Sleep::fake();
+    $master = runningMaster();
+    $installs = new ArrayObject;
+    $workerCalls = new ArrayObject;
+    $otpCalls = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($installs, $otpCalls) {
+            $otpCalls[] = true;
+            $sigterm = collect($installs)->first(fn (array $install) => $install[0] === 15);
+
+            if ($sigterm === null) {
+                CopySetting::query()->update(['is_running' => false]);
+
+                throw new DerivApiException('no SIGTERM handler installed');
+            }
+
+            ($sigterm[1])(15);
+
+            throw new DerivApiException('interrupted by SIGTERM');
+        });
+
+    listenerWithSignals($master->id, $installs, function () use ($workerCalls) {
+        $workerCalls[] = true;
+    })->handle();
+
+    expect($workerCalls)->toHaveCount(1)
+        ->and($otpCalls)->toHaveCount(1);
+
+    Sleep::assertNeverSlept();
+});
+
+test('the worker\'s handlers are restored when the job ends', function () {
+    Sleep::fake();
+    $master = runningMaster();
+    $installs = new ArrayObject;
+    $previous = fn () => null;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () {
+            CopySetting::query()->update(['is_running' => false]);
+
+            throw new DerivApiException('stop');
+        });
+
+    listenerWithSignals($master->id, $installs, $previous)->handle();
+
+    $last = collect($installs)->groupBy(fn (array $install) => $install[0])->map(fn ($group) => $group->last()[1]);
+
+    expect($last->keys()->sort()->values()->all())->toBe([2, 15])
+        ->and($last[15])->toBe($previous)
+        ->and($last[2])->toBe($previous);
+});
