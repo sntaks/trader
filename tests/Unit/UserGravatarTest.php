@@ -8,7 +8,7 @@ test('gravatar returns correct url for email', function () {
     $url = $user->gravatar();
 
     $hash = md5('test@example.com');
-    expect($url)->toBe("https://www.gravatar.com/avatar/{$hash}?s=80&d=mp");
+    expect($url)->toBe("https://www.gravatar.com/avatar/{$hash}?s=80&d=robohash");
 });
 
 test('gravatar normalises email before hashing', function () {
