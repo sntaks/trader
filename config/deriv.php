@@ -17,6 +17,15 @@ return [
     'partner_token' => env('DERIV_PARTNER_TOKEN'),
 
     /*
+    | Affiliate tagging, from the Partners dashboard. When `affiliate_token` is set, Deriv sign-in and
+    | sign-up links carry `affiliate_token`, `utm_medium=affiliate`, `utm_campaign` and `utm_source`
+    | (the affiliate ID), as Deriv's OAuth documentation names them.
+    */
+    'affiliate_token' => env('DERIV_AFFILIATE_TOKEN'),
+    'affiliate_id' => env('DERIV_AFFILIATE_ID'),
+    'utm_campaign' => env('DERIV_UTM_CAMPAIGN', 'copytrader'),
+
+    /*
     | Scopes requested at Deriv sign-in. `trade` covers every call this app makes. Deriv does not
     | document refresh tokens; add `offline_access` only after a test login shows Deriv accepts it.
     */

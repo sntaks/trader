@@ -295,3 +295,56 @@ test('pat connection validation messages come from the form request', function (
     'short token' => [['pat_token' => 'abc'], 'pat_token', 'That token is too short — copy the whole token from Deriv.'],
     'unknown redirect' => [['pat_token' => 'a1b2c3d4e5f6g7h8i9j0', 'redirect_to' => 'elsewhere'], 'redirect_to', 'The selected redirect to is invalid.'],
 ]);
+
+/**
+ * The query string of the Deriv authorize URL the connect route redirects to.
+ *
+ * @return array<string, string>
+ */
+function connectQuery(User $user, array $params = []): array
+{
+    $location = test()->actingAs($user)->get(route('deriv.connect', $params))->headers->get('Location');
+    parse_str((string) parse_url((string) $location, PHP_URL_QUERY), $query);
+
+    return $query;
+}
+
+test('redirect carries the affiliate token and campaign when configured', function () {
+    config(['deriv.affiliate_token' => 'aff_tok', 'deriv.affiliate_id' => 'aff_42', 'deriv.utm_campaign' => 'copytrader']);
+
+    expect(connectQuery(User::factory()->create()))->toMatchArray([
+        'affiliate_token' => 'aff_tok',
+        'utm_medium' => 'affiliate',
+        'utm_campaign' => 'copytrader',
+        'utm_source' => 'aff_42',
+    ]);
+});
+
+test('redirect sends no affiliate parameters without a token', function () {
+    config(['deriv.affiliate_token' => null, 'deriv.affiliate_id' => 'aff_42']);
+
+    expect(connectQuery(User::factory()->create()))
+        ->not->toHaveKeys(['affiliate_token', 'utm_medium', 'utm_campaign', 'utm_source']);
+});
+
+test('redirect leaves out an empty affiliate id and campaign', function () {
+    config(['deriv.affiliate_token' => 'aff_tok', 'deriv.affiliate_id' => '', 'deriv.utm_campaign' => '']);
+
+    expect(connectQuery(User::factory()->create()))
+        ->toHaveKey('affiliate_token', 'aff_tok')
+        ->not->toHaveKeys(['utm_campaign', 'utm_source']);
+});
+
+test('the sign-up link asks deriv for the registration form', function () {
+    expect(connectQuery(User::factory()->create(), ['signup' => 1]))->toHaveKey('prompt', 'registration');
+});
+
+test('only signup=1 asks for the registration form', function (mixed $value) {
+    expect(connectQuery(User::factory()->create(), ['signup' => $value]))->not->toHaveKey('prompt');
+})->with([0, 'yes', '']);
+
+test('an unconnected user sees the create-account link', function () {
+    $this->actingAs(User::factory()->create())->get(route('copy-trading'))
+        ->assertSeeText('No Deriv account? Create one')
+        ->assertSee(route('deriv.connect', ['signup' => 1]), false);
+});
