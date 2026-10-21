@@ -131,3 +131,14 @@ test('startBot never records a stale balance as the start balance', function () 
 
     expect((float) $setting->fresh()->start_balance)->toBe(50.0);
 });
+
+test('the dashboard explains a reauth stop', function () {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)
+        ->assertSee('Deriv Connection Lost')
+        ->assertSee('has expired or was revoked');
+});

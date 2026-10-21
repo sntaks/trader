@@ -1,10 +1,12 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivAuthException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivRateLimiter;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -290,4 +292,19 @@ test('a balance read that refuses stale copies throws when throttled', function 
 
     expect(fn () => $service->getBalance($connection, 'DOT100', allowStale: false))
         ->toThrow(DerivRateLimitedException::class);
+});
+
+test('an otp 401 throws DerivAuthException', function () {
+    $this->otpResponses['DOT100'] = Http::response(['errors' => [['code' => 'InvalidToken', 'message' => 'Token revoked']]], 401);
+
+    expect(fn () => app(DerivApiService::class)->getOtpUrl(DerivConnection::factory()->create(), 'DOT100'))
+        ->toThrow(DerivAuthException::class, 'Token revoked');
+});
+
+test('an accounts 401 throws DerivAuthException', function () {
+    Http::swap(new Factory);
+    Http::fake(['api.derivws.com/trading/v1/options/accounts' => Http::response(['errors' => [['code' => 'InvalidToken', 'message' => 'Token revoked']]], 401)]);
+
+    expect(fn () => app(DerivApiService::class)->getAccounts(DerivConnection::factory()->create()))
+        ->toThrow(DerivAuthException::class);
 });

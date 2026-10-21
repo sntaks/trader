@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\DerivAuthException;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
@@ -28,6 +29,15 @@ class MasterListenerJob implements ShouldQueue
     private const SIGTERM = 15;
 
     private const SIGINT = 2;
+
+    /** Reconnect delays double from this many seconds after each failure in a row... */
+    private const BACKOFF_BASE_SECONDS = 5;
+
+    /** ...up to this ceiling. */
+    private const BACKOFF_MAX_SECONDS = 300;
+
+    /** A session that lasted this long counts as healthy and resets the failure count. */
+    private const HEALTHY_SESSION_SECONDS = 60;
 
     /** Seconds a read waits before the idle tick (heartbeat, stop check, ping). */
     protected float $readTimeoutSeconds = 30.0;
@@ -78,6 +88,7 @@ class MasterListenerJob implements ShouldQueue
         Log::info("MasterListenerJob starting for connection #{$this->connectionId}, account {$masterAccountId}");
 
         $stopping = false;
+        $failures = 0;
         $workerHandlers = $this->chainStopSignals($stopping);
 
         try {
@@ -93,15 +104,26 @@ class MasterListenerJob implements ShouldQueue
                 $connection = $connection->fresh() ?? $connection;
                 $this->updateHeartbeat();
 
+                $sessionStartedAt = time();
+
                 try {
                     $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId, DerivRateLimiter::PRIORITY_TRADE);
                     Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}");
                     $this->runSession($wsUrl, $stopping);
+                    $failures = 0;
+                } catch (DerivAuthException $e) {
+                    $this->stopForReauth($connection, $e);
+
+                    return;
                 } catch (\Throwable $e) {
-                    Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in 5s...");
+                    $failures = time() - $sessionStartedAt >= self::HEALTHY_SESSION_SECONDS ? 1 : $failures + 1;
+                    $maxDelay = self::backoffSeconds($failures);
+                    $delay = random_int(intdiv($maxDelay, 2), $maxDelay);
+
+                    Log::warning("MasterListenerJob: session ended for connection #{$this->connectionId} — {$e->getMessage()}. Reconnecting in {$delay}s...");
 
                     if (! $stopping) {
-                        Sleep::for(5)->seconds();
+                        Sleep::for($delay)->seconds();
                     }
                 }
             }
@@ -110,6 +132,28 @@ class MasterListenerJob implements ShouldQueue
                 $this->installSignalHandler($signal, $handler);
             }
         }
+    }
+
+    /** Upper bound of the reconnect delay after the n-th failure in a row; the actual delay is jittered between half of it and all of it. */
+    public static function backoffSeconds(int $failures): int
+    {
+        return (int) min(self::BACKOFF_MAX_SECONDS, self::BACKOFF_BASE_SECONDS * 2 ** max(0, min($failures - 1, 16)));
+    }
+
+    /**
+     * Deriv rejected the token: retrying cannot help. Mark the connection expired so every page and
+     * trade path treats it as needing a reconnect, and stop each bot that copies from it, with a reason.
+     */
+    private function stopForReauth(DerivConnection $connection, DerivAuthException $e): void
+    {
+        $connection->update(['expires_at' => now()]);
+
+        $stopped = CopySetting::query()
+            ->where('master_connection_id', $this->connectionId)
+            ->where('is_running', true)
+            ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+
+        Log::error("MasterListenerJob: Deriv rejected the token for connection #{$this->connectionId} — {$e->getMessage()}. Stopped {$stopped} bot(s); the owner must reconnect.");
     }
 
     // ─── Signals ──────────────────────────────────────────────────────────────

@@ -1,12 +1,14 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivAuthException;
 use App\Jobs\MasterListenerJob;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivRateLimiter;
 use App\Services\WebSocketFrameCodec;
+use Carbon\CarbonInterval;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
@@ -306,4 +308,72 @@ test('the worker\'s handlers are restored when the job ends', function () {
     expect($last->keys()->sort()->values()->all())->toBe([2, 15])
         ->and($last[15])->toBe($previous)
         ->and($last[2])->toBe($previous);
+});
+
+test('a dead token stops the listener and its followers', function () {
+    Sleep::fake();
+    $master = DerivConnection::factory()->master()->create(['expires_at' => null]);
+    $followers = CopySetting::factory()->count(2)->create(['master_connection_id' => $master->id, 'master_account_id' => 'DOT500', 'is_running' => true]);
+    $otherMaster = DerivConnection::factory()->master()->create();
+    $bystander = CopySetting::factory()->create(['master_connection_id' => $otherMaster->id, 'is_running' => true]);
+    $otpCalls = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) > 1) {
+                CopySetting::query()->update(['is_running' => false]);
+            }
+
+            throw new DerivAuthException('Token revoked');
+        });
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($otpCalls)->toHaveCount(1)
+        ->and($master->fresh()->isExpired())->toBeTrue()
+        ->and($followers->map(fn (CopySetting $setting) => $setting->fresh()->only('is_running', 'stop_reason'))->all())
+        ->each->toBe(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH])
+        ->and($bystander->fresh()->is_running)->toBeTrue();
+
+    Sleep::assertNeverSlept();
+});
+
+test('other failures back off exponentially with jitter', function () {
+    Sleep::fake();
+    $durations = new ArrayObject;
+    Sleep::whenFakingSleep(function (CarbonInterval $duration) use ($durations) {
+        $durations[] = $duration->totalSeconds;
+    });
+    $master = runningMaster();
+    $otpCalls = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) === 4) {
+                CopySetting::query()->update(['is_running' => false]);
+            }
+
+            throw new DerivApiException('Deriv unreachable');
+        });
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($durations)->toHaveCount(4);
+
+    foreach ([[2, 5], [5, 10], [10, 20], [20, 40]] as $i => [$low, $high]) {
+        expect($durations[$i])->toBeGreaterThanOrEqual($low)->toBeLessThanOrEqual($high);
+    }
+});
+
+test('backoff is capped at five minutes', function () {
+    expect(MasterListenerJob::backoffSeconds(1))->toBe(5)
+        ->and(MasterListenerJob::backoffSeconds(4))->toBe(40)
+        ->and(MasterListenerJob::backoffSeconds(10))->toBe(300)
+        ->and(MasterListenerJob::backoffSeconds(64))->toBe(300);
 });
