@@ -6,6 +6,7 @@ use App\Concerns\PasswordValidationRules;
 use App\Concerns\ProfileValidationRules;
 use App\Mail\WelcomeMail;
 use App\Models\User;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Validator;
@@ -24,10 +25,10 @@ class CreateNewUser implements CreatesNewUsers
      */
     public function create(array $input): User
     {
-        // Honeypot: bots fill this field, real users never see it
+        // Honeypot: bots fill this field, real users never see it. Answer with a plain redirect home:
+        // no user, no login, and nothing that tells the bot it was caught.
         if (! empty($input['website'])) {
-            // Silently pretend success without creating a user
-            return new User;
+            throw new HttpResponseException(redirect()->route('home'));
         }
 
         // Registration rate limiting: 5 per IP per minute
@@ -41,8 +42,8 @@ class CreateNewUser implements CreatesNewUsers
 
         RateLimiter::hit($throttleKey, 60);
 
-        // Sanitize inputs before validation
-        $input['name'] = htmlspecialchars(strip_tags(trim($input['name'] ?? '')), ENT_QUOTES, 'UTF-8');
+        // Names are stored as typed; the name rule rejects markup and Blade escapes on output.
+        $input['name'] = trim($input['name'] ?? '');
         $input['email'] = strtolower(trim($input['email'] ?? ''));
 
         Validator::make($input, [

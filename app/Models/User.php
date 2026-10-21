@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Laravel\Fortify\TwoFactorAuthenticatable;
 
@@ -85,6 +86,24 @@ class User extends Authenticatable implements MustVerifyEmail
         $followerAccountId = $this->copySetting?->follower_account_id;
 
         return in_array($followerAccountId, $accountIds, true) ? $followerAccountId : ($accountIds[0] ?? null);
+    }
+
+    /**
+     * Lock out whoever set up this account before its email was verified: a Google sign-in proved
+     * the mailbox belongs to someone else. Clears the password and two-factor setup, rotates the
+     * remember token and ends every stored session. The owner can set a password via "Forgot password".
+     */
+    public function secureAfterTakeover(): void
+    {
+        $this->forceFill([
+            'password' => null,
+            'two_factor_secret' => null,
+            'two_factor_recovery_codes' => null,
+            'two_factor_confirmed_at' => null,
+            'remember_token' => Str::random(60),
+        ])->save();
+
+        DB::table(config('session.table', 'sessions'))->where('user_id', $this->id)->delete();
     }
 
     public function copyTrades(): HasMany

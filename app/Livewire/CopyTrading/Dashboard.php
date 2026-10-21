@@ -130,6 +130,9 @@ class Dashboard extends Component
     /** Shown when the bot is started before a follower account is chosen; every copy is bought on that account. */
     private const FOLLOWER_ACCOUNT_REQUIRED = 'Choose the account to copy trades into before starting.';
 
+    /** Shown when the bot is started without a master, e.g. after the master disconnected. */
+    public const MASTER_REQUIRED = 'Choose a master to copy before starting.';
+
     public function mount(): void
     {
         $setting = auth()->user()->copySetting;
@@ -411,6 +414,12 @@ class Dashboard extends Component
             return;
         }
 
+        if (! $setting->master_connection_id) {
+            $this->addError('bot', self::MASTER_REQUIRED);
+
+            return;
+        }
+
         if (! $setting->follower_account_id) {
             $this->addError('bot', self::FOLLOWER_ACCOUNT_REQUIRED);
 
@@ -511,8 +520,6 @@ class Dashboard extends Component
 
         $isRunning = (bool) $setting->is_running;
 
-        CopyTrade::query()->where('user_id', auth()->id())->delete();
-
         if ($this->stopBotOnReset && $isRunning) {
             $setting->update(['is_running' => false]);
             $this->paused = false;
@@ -564,9 +571,7 @@ class Dashboard extends Component
 
         $setting->update($updates);
 
-        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
-        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
+        $this->forgetMasterProgress($setting);
 
         $this->showResetModal = false;
         $this->resetPage();
@@ -582,15 +587,13 @@ class Dashboard extends Component
             return;
         }
 
-        CopyTrade::query()->where('user_id', auth()->id())->delete();
-
         if ($setting->is_running) {
             $setting->update(['is_running' => false]);
         }
 
         $setting->update([
             'start_balance' => null,
-            'session_started_at' => null,
+            'session_started_at' => now(),
             'is_running' => false,
             'stop_reason' => null,
             'stopped_at_profit' => null,
@@ -628,12 +631,22 @@ class Dashboard extends Component
         $this->forexPairs = [];
         $this->paused = false;
 
-        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
-        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
+        $this->forgetMasterProgress($setting);
 
         $this->showResetModal = false;
         $this->resetPage();
+    }
+
+    /** Forget how far this follower has read the master's outcomes; a setting without a master has nothing to forget. */
+    private function forgetMasterProgress(CopySetting $setting): void
+    {
+        if (! $setting->master_connection_id) {
+            return;
+        }
+
+        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
+        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
+        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
     }
 
     public function dismissStopPopup(): void

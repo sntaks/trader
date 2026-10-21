@@ -70,6 +70,9 @@ class CopySetting extends Model
     /** Stop reason when the owner disconnected the Deriv account the bot trades with. */
     public const STOP_REASON_DISCONNECTED = 'deriv_disconnected';
 
+    /** Stop reason when the master this bot copied removed their Deriv connection. */
+    public const STOP_REASON_MASTER_DISCONNECTED = 'master_disconnected';
+
     /** @var list<string> Deriv symbols offered in the market filter. */
     public const MARKET_SYMBOLS = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'];
 

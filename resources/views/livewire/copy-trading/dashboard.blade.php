@@ -47,6 +47,14 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <h3 class="text-lg font-bold text-amber-400">Deriv Connection Lost</h3>
                         <p class="text-xs text-zinc-400">Trading stopped automatically</p>
                     </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                        <flux:icon.user-minus class="size-6 text-amber-400" />
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-amber-400">Master Stopped Sharing</h3>
+                        <p class="text-xs text-zinc-400">Trading stopped automatically</p>
+                    </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
                         <flux:icon.link-slash class="size-6 text-amber-400" />
@@ -96,6 +104,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
                         A Deriv connection this bot depends on has expired or was revoked, or is a sign-in that only lasts an hour. Copying has stopped until it is reconnected with an API token.
+                    </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
+                    <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+                        The master you were copying disconnected their Deriv account. Choose another master to continue.
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
@@ -151,8 +163,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 <label class="flex cursor-default items-center gap-3 rounded-lg border border-[#1F2937] bg-[#111827] px-4 py-3 opacity-60">
                     <input type="checkbox" checked disabled class="rounded border-zinc-600 bg-[#111827] text-[#1E45FC]" />
                     <div>
-                        <p class="text-sm font-medium text-white">Clear trade history</p>
-                        <p class="text-xs text-zinc-500">All recorded trades for this session will be deleted</p>
+                        <p class="text-sm font-medium text-white">Start a fresh session</p>
+                        <p class="text-xs text-zinc-500">Stats and the trade list start fresh. Past trades stay on record.</p>
                     </div>
                 </label>
 
@@ -221,7 +233,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     <span wire:loading wire:target="performReset">Resetting…</span>
                 </flux:button>
                 <flux:button wire:click="performFullReset" wire:loading.attr="disabled" wire:target="performFullReset"
-                    wire:confirm="This will clear all history, restore all settings to defaults, and stop the bot. Are you sure?"
+                    wire:confirm="This will start a fresh session, restore all settings to defaults, and stop the bot. Past trades stay on record. Are you sure?"
                     variant="danger">
                     <span wire:loading.remove wire:target="performFullReset">Full Reset</span>
                     <span wire:loading wire:target="performFullReset">…</span>
@@ -546,11 +558,13 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
             {{-- Master outcomes + slave pattern --}}
             <div class="flex-1 min-w-0 rounded-xl border border-[#1F2937] bg-[#0B1220] px-4 py-3 space-y-2">
-                @livewire('copy-trading.master-outcomes-ticker', [
-                    'connectionId'   => $setting->master_connection_id,
-                    'pattern'        => $setting->follower_pattern ?? '',
-                    'patternEnabled' => (bool) $setting->pattern_enabled,
-                ], key('ticker-'.$setting->master_connection_id))
+                @if($setting->master_connection_id)
+                    @livewire('copy-trading.master-outcomes-ticker', [
+                        'connectionId'   => $setting->master_connection_id,
+                        'pattern'        => $setting->follower_pattern ?? '',
+                        'patternEnabled' => (bool) $setting->pattern_enabled,
+                    ], key('ticker-'.$setting->master_connection_id))
+                @endif
 
                 {{-- Slave pattern display --}}
                 @if($setting->pattern_enabled && $setting->follower_pattern)
@@ -589,8 +603,11 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                     Own account — <span class="font-mono text-amber-400">{{ $setting->master_account_id }}</span>
                                 </p>
                                 <p class="text-xs text-zinc-500">Your own account is the master</p>
+                            @elseif($setting->masterConnection)
+                                <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection->user?->name }}</p>
                             @else
-                                <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection?->user?->name }}</p>
+                                <p class="mt-1 font-semibold text-white">No master chosen</p>
+                                <p class="text-xs text-zinc-500">Choose a master below before starting</p>
                             @endif
                         </div>
                         <flux:button wire:click="$toggle('showMasterList')" size="sm" variant="ghost" icon="arrows-right-left">

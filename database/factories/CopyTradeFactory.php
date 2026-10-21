@@ -25,7 +25,7 @@ class CopyTradeFactory extends Factory
             'master_trx_id' => (string) fake()->unique()->numberBetween(100000, 999999),
             'master_contract_id' => (string) fake()->unique()->numberBetween(100000, 999999),
             'follower_trx_id' => (string) fake()->numberBetween(100000, 999999),
-            'follower_contract_id' => (string) fake()->numberBetween(100000, 999999),
+            'follower_contract_id' => (string) fake()->unique()->numberBetween(100000, 999999),
             'follower_account_id' => 'DOT100',
             'symbol' => 'R_50',
             'contract_type' => 'DIGITEVEN',

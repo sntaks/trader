@@ -1,6 +1,6 @@
 {{ config('app.name') }}
 
-Hi {{ $user->name }},
+Hi {!! $user->name !!},
 
 Welcome to {{ config('app.name') }} — your account is set up and ready to go.
 
