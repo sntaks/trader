@@ -84,10 +84,16 @@ class DerivConnection extends Model
     /**
      * Remove the connection: stop the owner's running bot and every follower copying it, each with a
      * reason, retire every cached read, then delete the row. Settings and copy trades that pointed at it
-     * are kept with the link emptied. Deriv documents no way to revoke a token, so it stays valid there.
+     * are kept with the link emptied, and the owner's own-account master is cleared with it, since it named
+     * an account on this connection. Deriv documents no way to revoke a token, so it stays valid there.
      */
     public function disconnect(): void
     {
+        CopySetting::query()
+            ->where('user_id', $this->user_id)
+            ->where('master_connection_id', $this->id)
+            ->update(['master_account_id' => null]);
+
         CopySetting::query()
             ->where('user_id', $this->user_id)
             ->where('is_running', true)

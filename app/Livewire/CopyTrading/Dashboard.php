@@ -571,9 +571,7 @@ class Dashboard extends Component
 
         $setting->update($updates);
 
-        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
-        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
+        $this->forgetMasterProgress($setting);
 
         $this->showResetModal = false;
         $this->resetPage();
@@ -633,12 +631,22 @@ class Dashboard extends Component
         $this->forexPairs = [];
         $this->paused = false;
 
-        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
-        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
-        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
+        $this->forgetMasterProgress($setting);
 
         $this->showResetModal = false;
         $this->resetPage();
+    }
+
+    /** Forget how far this follower has read the master's outcomes; a setting without a master has nothing to forget. */
+    private function forgetMasterProgress(CopySetting $setting): void
+    {
+        if (! $setting->master_connection_id) {
+            return;
+        }
+
+        Redis::del("master_outcomes_offset:{$setting->master_connection_id}:".auth()->id());
+        Cache::forget(CopyTradeJob::patternConsumedKey($setting->master_connection_id, auth()->id()));
+        Cache::forget(CopyTradeJob::waitTriggerUsedKeyFor($setting->master_connection_id, auth()->id()));
     }
 
     public function dismissStopPopup(): void

@@ -163,8 +163,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 <label class="flex cursor-default items-center gap-3 rounded-lg border border-[#1F2937] bg-[#111827] px-4 py-3 opacity-60">
                     <input type="checkbox" checked disabled class="rounded border-zinc-600 bg-[#111827] text-[#1E45FC]" />
                     <div>
-                        <p class="text-sm font-medium text-white">Clear trade history</p>
-                        <p class="text-xs text-zinc-500">Stats and the trade list start fresh; past trades stay on record</p>
+                        <p class="text-sm font-medium text-white">Start a fresh session</p>
+                        <p class="text-xs text-zinc-500">Stats and the trade list start fresh. Past trades stay on record.</p>
                     </div>
                 </label>
 
@@ -233,7 +233,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     <span wire:loading wire:target="performReset">Resetting…</span>
                 </flux:button>
                 <flux:button wire:click="performFullReset" wire:loading.attr="disabled" wire:target="performFullReset"
-                    wire:confirm="This will clear all history, restore all settings to defaults, and stop the bot. Are you sure?"
+                    wire:confirm="This will start a fresh session, restore all settings to defaults, and stop the bot. Past trades stay on record. Are you sure?"
                     variant="danger">
                     <span wire:loading.remove wire:target="performFullReset">Full Reset</span>
                     <span wire:loading wire:target="performFullReset">…</span>
@@ -603,8 +603,11 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                     Own account — <span class="font-mono text-amber-400">{{ $setting->master_account_id }}</span>
                                 </p>
                                 <p class="text-xs text-zinc-500">Your own account is the master</p>
+                            @elseif($setting->masterConnection)
+                                <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection->user?->name }}</p>
                             @else
-                                <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection?->user?->name }}</p>
+                                <p class="mt-1 font-semibold text-white">No master chosen</p>
+                                <p class="text-xs text-zinc-500">Choose a master below before starting</p>
                             @endif
                         </div>
                         <flux:button wire:click="$toggle('showMasterList')" size="sm" variant="ghost" icon="arrows-right-left">

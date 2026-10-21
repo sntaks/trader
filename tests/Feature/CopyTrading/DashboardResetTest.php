@@ -73,3 +73,14 @@ test('reset keeps trades but scopes the stop-loss budget to the new session', fu
     expect($setting->fresh()->stopLossBudget())->toBe(10.0)
         ->and($pending->fresh())->not->toBeNull();
 });
+
+test('the reset modal does not claim history is deleted', function () {
+    $setting = followerWithPastTrades();
+
+    Livewire::actingAs($setting->user)
+        ->test(Dashboard::class)
+        ->set('showResetModal', true)
+        ->assertDontSee('Clear trade history')
+        ->assertDontSee('clear all history')
+        ->assertSee('Past trades stay on record');
+});

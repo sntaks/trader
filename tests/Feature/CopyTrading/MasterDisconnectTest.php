@@ -78,3 +78,46 @@ test('ensure-listeners skips settings without a master', function () {
 
     Bus::assertNotDispatched(MasterListenerJob::class);
 });
+
+test('reset works for a setting without a master', function (string $action) {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create([
+        'user_id' => $user->id,
+        'master_connection_id' => null,
+        'session_started_at' => now()->subHour(),
+    ]);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->set('showResetModal', true)
+        ->call($action)
+        ->assertSet('showResetModal', false);
+
+    expect($setting->fresh()->session_started_at->isAfter(now()->subMinute()))->toBeTrue();
+})->with(['performReset', 'performFullReset']);
+
+test('an own-account disconnect leaves the setting with no master at all', function () {
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    $connection = DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create([
+        'user_id' => $user->id,
+        'master_connection_id' => $connection->id,
+        'master_account_id' => 'VRTC1',
+    ]);
+
+    $this->actingAs($user)->delete(route('deriv.disconnect'));
+
+    expect($setting->fresh()->only('master_connection_id', 'master_account_id'))
+        ->toBe(['master_connection_id' => null, 'master_account_id' => null]);
+
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    Livewire::actingAs($user->fresh())
+        ->test(Dashboard::class)
+        ->set('settingsOpen', true)
+        ->assertDontSee('Your own account is the master')
+        ->assertSee('No master chosen');
+});
