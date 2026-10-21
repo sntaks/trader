@@ -93,6 +93,10 @@ class Dashboard extends Component
     // -- Runtime state --
     public bool $paused = false;
 
+    /** When the running session started, in Unix seconds, for the run timer; null while stopped. Set on every render. */
+    #[Locked]
+    public ?int $runStartedAt = null;
+
     // -- Transactions table --
     public int $perPage = 25;
 
@@ -875,6 +879,8 @@ class Dashboard extends Component
         }
 
         $trades = $query->orderBy('traded_at')->paginate($this->perPage);
+
+        $this->runStartedAt = $this->setting?->is_running ? $this->setting->session_started_at?->timestamp : null;
 
         return view('livewire.copy-trading.dashboard', compact('trades'));
     }

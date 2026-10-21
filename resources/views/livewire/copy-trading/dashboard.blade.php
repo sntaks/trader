@@ -1,17 +1,16 @@
 @php
 $setting = $this->setting;
-$initialSeconds = ($setting?->is_running && $setting?->session_started_at)
-    ? max(0, now()->diffInSeconds($setting->session_started_at))
-    : 0;
 @endphp
-<div class="space-y-6" wire:poll.15s x-data="{ runSeconds: {{ $initialSeconds }}, timer: null }"
+<div class="space-y-6" wire:poll.15s
+    x-data="{ runSeconds: 0, clockOffset: {{ now()->timestamp }} - Math.floor(Date.now() / 1000), timer: null, destroy() { clearInterval(this.timer) } }"
     x-init="
-        if ($wire.setting?.is_running) { timer = setInterval(() => runSeconds++, 1000); }
-        $watch('$wire.setting?.is_running', val => {
-            clearInterval(timer);
-            if (val) { runSeconds = 0; timer = setInterval(() => runSeconds++, 1000); }
-            else { runSeconds = 0; }
-        });
+        const tick = () => {
+            runSeconds = $wire.runStartedAt
+                ? Math.max(0, Math.floor(Date.now() / 1000) + clockOffset - $wire.runStartedAt)
+                : 0;
+        };
+        tick();
+        timer = setInterval(tick, 1000);
     ">
 
     {{-- ================================================================ --}}
