@@ -8,9 +8,7 @@ use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\DerivLegacyApiService;
-use App\Services\DerivRateLimiter;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\Http;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
 use Livewire\Component;
@@ -173,15 +171,11 @@ class Setup extends Component
      */
     private function tryNewRestApi(string $token): ?string
     {
-        app(DerivRateLimiter::class)->acquire(null, DerivRateLimiter::PRIORITY_READ);
-
         try {
-            $response = Http::withHeaders([
-                'Deriv-App-ID' => (string) config('deriv.app_id_pat'),
-                'Authorization' => 'Bearer '.$token,
-                'Accept' => 'application/json',
-            ])->get('https://api.derivws.com/trading/v1/options/accounts');
-        } catch (\Throwable) {
+            $response = app(DerivApiService::class)->checkPat($token, (string) config('deriv.app_id_pat'));
+        } catch (DerivRateLimitedException $e) {
+            throw $e;
+        } catch (DerivApiException) {
             $this->patError = 'Could not reach Deriv. Please check your connection and try again.';
 
             return null;

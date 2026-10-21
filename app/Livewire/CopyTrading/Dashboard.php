@@ -419,7 +419,7 @@ class Dashboard extends Component
 
         if ($setting->start_balance === null && $derivConnection) {
             try {
-                $balance = app(DerivApiService::class)->getBalance($derivConnection, $setting->follower_account_id);
+                $balance = app(DerivApiService::class)->getBalance($derivConnection, $setting->follower_account_id, allowStale: false);
             } catch (DerivApiException $e) {
                 $this->addError('bot', $e->getMessage());
 
@@ -521,7 +521,7 @@ class Dashboard extends Component
                     $followerAccountId = auth()->user()->copySetting?->follower_account_id;
 
                     if ($connection && $followerAccountId) {
-                        $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId);
+                        $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId, allowStale: false);
                         $updates['start_balance'] = (float) ($result['balance']['balance'] ?? 0);
                     }
                 } catch (\Throwable) {

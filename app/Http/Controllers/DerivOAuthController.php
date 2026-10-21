@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
+use App\Services\DerivApiService;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -98,7 +101,7 @@ class DerivOAuthController extends Controller
      * Store a Personal Access Token (PAT) as a Deriv connection.
      * Validates the token against the Deriv REST API before saving.
      */
-    public function connectPat(Request $request): RedirectResponse
+    public function connectPat(Request $request, DerivApiService $derivApi): RedirectResponse
     {
         $validated = $request->validate([
             'pat_token' => ['required', 'string', 'min:10'],
@@ -109,12 +112,11 @@ class DerivOAuthController extends Controller
         $redirectTo = $validated['redirect_to'] ?? 'account';
 
         try {
-            $response = Http::withHeaders([
-                'Deriv-App-ID' => (string) config('deriv.app_id'),
-                'Authorization' => 'Bearer '.$token,
-                'Accept' => 'application/json',
-            ])->get('https://api.derivws.com/trading/v1/options/accounts');
-        } catch (\Throwable) {
+            $response = $derivApi->checkPat($token, (string) config('deriv.app_id'));
+        } catch (DerivRateLimitedException) {
+            return redirect()->route($redirectTo)
+                ->with('error', 'Deriv is busy right now — try again in a minute.');
+        } catch (DerivApiException) {
             return redirect()->route($redirectTo)
                 ->with('error', 'Could not reach Deriv. Please try again.');
         }

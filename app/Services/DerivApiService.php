@@ -98,15 +98,32 @@ class DerivApiService
         $this->clearCache($connection);
     }
 
+    /**
+     * Check a Personal Access Token against the accounts endpoint, through the rate limiter. Never cached.
+     *
+     * @throws DerivRateLimitedException When the budget is spent or Deriv answers 429.
+     * @throws DerivApiException When Deriv cannot be reached.
+     */
+    public function checkPat(string $token, string $appId): Response
+    {
+        return $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
+            'Deriv-App-ID' => $appId,
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+        ])->get(self::REST_BASE.'/accounts'));
+    }
+
     // ─── WebSocket API ────────────────────────────────────────────────────────
 
     /**
      * Get the account's balance, at most $maxAgeSeconds old. Each max age has its own cache entry,
      * so a caller that needs a fresh balance never receives one cached for a longer-lived caller.
+     * Callers that store the balance pass $allowStale = false, so a throttled read throws instead
+     * of returning the last good value.
      */
-    public function getBalance(DerivConnection $connection, string $accountId, int $maxAgeSeconds = 30): array
+    public function getBalance(DerivConnection $connection, string $accountId, int $maxAgeSeconds = 30, bool $allowStale = true): array
     {
-        return $this->cachedCall($connection, "{$accountId}:balance:{$maxAgeSeconds}s", $maxAgeSeconds, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]));
+        return $this->cachedCall($connection, "{$accountId}:balance:{$maxAgeSeconds}s", $maxAgeSeconds, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]), $allowStale);
     }
 
     /**
@@ -338,7 +355,7 @@ class DerivApiService
      * Cache a read for $ttl seconds, and keep its last good value for when Deriv's rate limit is reached.
      * The stale copy outlives clearCache() on purpose; it is served only for a rate-limit refusal.
      */
-    private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn): array
+    private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn, bool $allowStale = true): array
     {
         $staleKey = "deriv:conn:{$connection->id}:stale:{$key}";
 
@@ -350,6 +367,10 @@ class DerivApiService
                 return $value;
             });
         } catch (DerivRateLimitedException $e) {
+            if (! $allowStale) {
+                throw $e;
+            }
+
             return Cache::get($staleKey) ?? throw $e;
         }
     }

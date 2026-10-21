@@ -279,3 +279,15 @@ test('default callers never get the two minute balance', function () {
 
     expect($service->getBalance($connection, 'DOT100')['balance']['balance'])->toBe(9);
 });
+
+test('a balance read that refuses stale copies throws when throttled', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 12.5]]]);
+    $connection = DerivConnection::factory()->create();
+
+    $service->getBalance($connection, 'DOT100');
+    $service->clearCache($connection);
+    app(DerivRateLimiter::class)->coolDown(60);
+
+    expect(fn () => $service->getBalance($connection, 'DOT100', allowStale: false))
+        ->toThrow(DerivRateLimitedException::class);
+});
