@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\DerivApiService;
 use Database\Factories\DerivConnectionFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -78,6 +79,22 @@ class DerivConnection extends Model
             ->where(fn ($query) => $query->where('master_connection_id', $this->id)->orWhere('user_id', $this->user_id))
             ->where('is_running', true)
             ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
+    }
+
+    /**
+     * Remove the connection: stop the owner's running bot with a reason, retire every cached read,
+     * then delete the row. Deriv documents no way to revoke a token, so it stays valid on their side.
+     */
+    public function disconnect(): void
+    {
+        CopySetting::query()
+            ->where('user_id', $this->user_id)
+            ->where('is_running', true)
+            ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_DISCONNECTED]);
+
+        app(DerivApiService::class)->forgetConnection($this);
+
+        $this->delete();
     }
 
     /** Whether this connection uses a Personal Access Token rather than a Deriv sign-in. */

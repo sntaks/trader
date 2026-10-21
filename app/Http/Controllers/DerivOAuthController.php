@@ -6,6 +6,7 @@ use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Http\Requests\ConnectPatRequest;
 use App\Models\DerivConnection;
+use App\Services\DerivApiService;
 use App\Services\DerivPatConnector;
 use App\Services\DerivTokenRefresher;
 use Illuminate\Http\Client\RequestException;
@@ -81,7 +82,7 @@ class DerivOAuthController extends Controller
                 ->with('error', 'Failed to exchange authorization code. Please try again.');
         }
 
-        DerivConnection::updateOrCreate(
+        $connection = DerivConnection::updateOrCreate(
             ['user_id' => $request->user()->id],
             [
                 'access_token' => $response['access_token'],
@@ -93,6 +94,8 @@ class DerivOAuthController extends Controller
                 'scope' => $response['scope'] ?? null,
             ]
         );
+
+        app(DerivApiService::class)->forgetConnection($connection);
 
         return redirect()->route('dashboard')
             ->with('success', 'Deriv account connected successfully.');
@@ -128,9 +131,9 @@ class DerivOAuthController extends Controller
      */
     public function disconnect(Request $request): RedirectResponse
     {
-        $request->user()->derivConnection()->delete();
+        $request->user()->derivConnection?->disconnect();
 
         return redirect()->route('dashboard')
-            ->with('success', 'Deriv account disconnected.');
+            ->with('success', 'Deriv account disconnected. To revoke access completely, also delete the token in your Deriv account settings.');
     }
 }

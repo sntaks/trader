@@ -321,6 +321,19 @@ class DerivApiService
         Cache::forever($versionKey, (int) Cache::get($versionKey, 0) + 1);
     }
 
+    /**
+     * Retire everything cached for this connection, stale copies included. For a token change
+     * (connect, reconnect, disconnect), where the old reads may belong to a different Deriv login.
+     */
+    public function forgetConnection(DerivConnection $connection): void
+    {
+        $this->clearCache($connection);
+
+        $generationKey = $this->staleGenerationKey($connection);
+
+        Cache::forever($generationKey, (int) Cache::get($generationKey, 0) + 1);
+    }
+
     // ─── Internals ────────────────────────────────────────────────────────────
 
     /**
@@ -377,10 +390,12 @@ class DerivApiService
     /**
      * Cache a read for $ttl seconds, and keep its last good value for when Deriv's rate limit is reached.
      * The stale copy outlives clearCache() on purpose; it is served only for a rate-limit refusal.
+     * forgetConnection() retires it by moving to a new stale generation.
      */
     private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn, bool $allowStale = true): array
     {
-        $staleKey = "deriv:conn:{$connection->id}:stale:{$key}";
+        $generation = (int) Cache::get($this->staleGenerationKey($connection), 0);
+        $staleKey = "deriv:conn:{$connection->id}:stale:g{$generation}:{$key}";
 
         try {
             return Cache::remember($this->cacheKey($connection, $key), $ttl, function () use ($fn, $staleKey): array {
@@ -409,6 +424,11 @@ class DerivApiService
     private function versionKey(DerivConnection $connection): string
     {
         return "deriv:conn:{$connection->id}:version";
+    }
+
+    private function staleGenerationKey(DerivConnection $connection): string
+    {
+        return "deriv:conn:{$connection->id}:stale-generation";
     }
 
     private function wsCall(DerivConnection $connection, string $accountId, array $request): array

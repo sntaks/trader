@@ -55,7 +55,7 @@ class DerivPatConnector
             throw new DerivApiException($response->json('errors.0.message') ?? 'Could not verify your token. Please try again.');
         }
 
-        return DerivConnection::updateOrCreate(
+        $connection = DerivConnection::updateOrCreate(
             ['user_id' => $user->id],
             [
                 'access_token' => $token,
@@ -65,6 +65,10 @@ class DerivPatConnector
                 'scope' => null,
             ]
         );
+
+        $this->derivApi->forgetConnection($connection);
+
+        return $connection;
     }
 
     private function limiterKey(User $user): string

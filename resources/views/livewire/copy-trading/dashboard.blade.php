@@ -47,6 +47,14 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <h3 class="text-lg font-bold text-amber-400">Deriv Connection Lost</h3>
                         <p class="text-xs text-zinc-400">Trading stopped automatically</p>
                     </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                        <flux:icon.link-slash class="size-6 text-amber-400" />
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-amber-400">Deriv Account Disconnected</h3>
+                        <p class="text-xs text-zinc-400">Trading stopped automatically</p>
+                    </div>
                 @else
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
                         <flux:icon.exclamation-triangle class="size-6 text-amber-400" />
@@ -88,6 +96,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
                         The Deriv connection this bot copies from has expired or was revoked. Copying has stopped until it is reconnected.
+                    </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
+                    <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+                        Your Deriv account was disconnected. Reconnect it to copy trade.
                     </div>
                 @else
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
