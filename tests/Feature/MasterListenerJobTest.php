@@ -10,6 +10,8 @@ use App\Services\DerivRateLimiter;
 use App\Services\WebSocketFrameCodec;
 use Carbon\CarbonInterval;
 use Illuminate\Cache\Events\KeyWritten;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Sleep;
@@ -485,4 +487,60 @@ test('an admin account change ends the session', function () {
     $job->handle();
 
     expect(array_map(fn (array $call) => $call[1], $calls->getArrayCopy()))->toBe(['DOT500', 'CR901']);
+});
+
+test('the listener runs on the listener connection', function () {
+    Bus::fake([MasterListenerJob::class]);
+
+    MasterListenerJob::dispatchOnce(5);
+
+    Bus::assertDispatched(MasterListenerJob::class, fn (MasterListenerJob $job) => $job->connection === 'listener' && $job->queue === 'listener');
+});
+
+test('dispatchOnce queues one copy', function () {
+    Bus::fake([MasterListenerJob::class]);
+
+    expect(MasterListenerJob::dispatchOnce(5))->toBeTrue()
+        ->and(MasterListenerJob::dispatchOnce(5))->toBeFalse()
+        ->and(MasterListenerJob::dispatchOnce(6))->toBeTrue();
+
+    Bus::assertDispatchedTimes(MasterListenerJob::class, 2);
+});
+
+test('a started listener clears its queued marker', function () {
+    $master = DerivConnection::factory()->master()->create();
+    Cache::put(MasterListenerJob::queuedKey($master->id), true, 600);
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect(Cache::has(MasterListenerJob::queuedKey($master->id)))->toBeFalse();
+});
+
+test('the listener hands over before retry_after', function () {
+    Bus::fake([MasterListenerJob::class]);
+    Sleep::fake(syncWithCarbon: true);
+    $master = runningMaster();
+    $otpCalls = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function () use ($otpCalls) {
+            $otpCalls[] = true;
+
+            if (count($otpCalls) > 1) {
+                CopySetting::query()->update(['is_running' => false]);
+            }
+
+            $this->travel(23)->hours();
+            $this->travel(1)->seconds();
+
+            throw new DerivApiException('session dropped');
+        });
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($otpCalls)->toHaveCount(1)
+        ->and(Cache::has(MasterListenerJob::runningKey($master->id)))->toBeFalse();
+
+    Bus::assertDispatched(MasterListenerJob::class, fn (MasterListenerJob $job) => $job->connectionId === $master->id);
 });

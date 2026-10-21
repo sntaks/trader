@@ -6,6 +6,7 @@ use App\Jobs\MasterListenerJob;
 use App\Models\CopySetting;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class EnsureListenersRunning extends Command
 {
@@ -29,8 +30,19 @@ class EnsureListenersRunning extends Command
                 continue;
             }
 
-            $this->warn("No live listener for connection #{$connectionId} — dispatching MasterListenerJob.");
-            MasterListenerJob::dispatch($connectionId);
+            if (MasterListenerJob::dispatchOnce($connectionId)) {
+                $this->warn("No live listener for connection #{$connectionId} — dispatching MasterListenerJob.");
+            } else {
+                $this->line("Listener for connection #{$connectionId} is already queued.");
+            }
+        }
+
+        $workers = (int) config('deriv.listener_workers');
+
+        if ($activeConnectionIds->count() > $workers) {
+            $message = "MasterListenerJob capacity: {$activeConnectionIds->count()} connections need a listener but only {$workers} listener workers are configured (DERIV_LISTENER_WORKERS / supervisor numprocs).";
+            Log::error($message);
+            $this->error($message);
         }
 
         if ($activeConnectionIds->isEmpty()) {

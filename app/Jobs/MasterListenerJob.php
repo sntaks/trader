@@ -40,13 +40,44 @@ class MasterListenerJob implements ShouldQueue
     /** A session that lasted this long counts as healthy and resets the failure count. */
     private const HEALTHY_SESSION_SECONDS = 60;
 
+    /** Hand over to a fresh job before the listener connection's 24 h retry_after re-queues this one. */
+    private const MAX_LIFETIME_SECONDS = 82800;
+
+    /** How long a queued-but-not-started job blocks another dispatch for the same connection. */
+    private const QUEUED_MARKER_SECONDS = 600;
+
     /** Seconds a read waits before the idle tick (heartbeat, stop check, ping). */
     protected float $readTimeoutSeconds = 30.0;
+
+    /** When this run started, for the lifetime limit. */
+    private int $startedAt = 0;
+
+    /** Set once a successor is queued, so this run's cleanup leaves the successor's keys alone. */
+    private bool $handedOver = false;
 
     public function __construct(
         public readonly int $connectionId,
     ) {
+        $this->onConnection('listener');
         $this->onQueue('listener');
+    }
+
+    /** Queue a listener unless one is already queued for this connection; true when it queued one. */
+    public static function dispatchOnce(int $connectionId): bool
+    {
+        if (! Cache::add(self::queuedKey($connectionId), true, self::QUEUED_MARKER_SECONDS)) {
+            return false;
+        }
+
+        self::dispatch($connectionId);
+
+        return true;
+    }
+
+    /** Marks a listener as queued but not yet started. */
+    public static function queuedKey(int $connectionId): string
+    {
+        return "deriv:listener:queued:{$connectionId}";
     }
 
     /** Cache key for deduplication — prevents multiple instances for the same connection. */
@@ -57,6 +88,8 @@ class MasterListenerJob implements ShouldQueue
 
     public function handle(): void
     {
+        Cache::forget(self::queuedKey($this->connectionId));
+
         // Atomic mutex: exit immediately if another instance is already running for this connection.
         // TTL 60 s; refreshed every ~30 s via updateHeartbeat() so it never expires while healthy.
         // If the process is killed without reaching the finally block, the key naturally expires
@@ -70,7 +103,9 @@ class MasterListenerJob implements ShouldQueue
         try {
             $this->runListener();
         } finally {
-            Cache::forget(self::runningKey($this->connectionId));
+            if (! $this->handedOver) {
+                Cache::forget(self::runningKey($this->connectionId));
+            }
         }
     }
 
@@ -86,6 +121,8 @@ class MasterListenerJob implements ShouldQueue
 
         Log::info("MasterListenerJob starting for connection #{$this->connectionId}");
 
+        $this->startedAt = now()->getTimestamp();
+
         $stopping = false;
         $failures = 0;
         $workerHandlers = $this->chainStopSignals($stopping);
@@ -98,6 +135,12 @@ class MasterListenerJob implements ShouldQueue
 
                 if (! $this->hasActiveFollowers($connection)) {
                     Log::info("MasterListenerJob: no active followers for connection #{$this->connectionId} — exiting.");
+
+                    return;
+                }
+
+                if ($this->pastLifetime()) {
+                    $this->handOver();
 
                     return;
                 }
@@ -141,6 +184,23 @@ class MasterListenerJob implements ShouldQueue
                 $this->installSignalHandler($signal, $handler);
             }
         }
+    }
+
+    private function pastLifetime(): bool
+    {
+        return now()->getTimestamp() - $this->startedAt >= self::MAX_LIFETIME_SECONDS;
+    }
+
+    /** Free this connection's keys and queue the successor, so the gap is about one worker poll. */
+    private function handOver(): void
+    {
+        Log::info("MasterListenerJob: lifetime reached for connection #{$this->connectionId} — handing over to a fresh job.");
+
+        Cache::forget(self::runningKey($this->connectionId));
+        Cache::forget(self::heartbeatKey($this->connectionId));
+        $this->handedOver = true;
+
+        self::dispatchOnce($this->connectionId);
     }
 
     /** Upper bound of the reconnect delay after the n-th failure in a row; the actual delay is jittered between half of it and all of it. */
@@ -402,6 +462,10 @@ class MasterListenerJob implements ShouldQueue
         if ($stopping || ! $this->hasActiveFollowers($connection)) {
             Log::info('MasterListenerJob: shutting down cleanly.');
 
+            return true;
+        }
+
+        if ($this->pastLifetime()) {
             return true;
         }
 

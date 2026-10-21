@@ -142,3 +142,22 @@ test('the dashboard explains a reauth stop', function () {
         ->assertSee('Deriv Connection Lost')
         ->assertSee('has expired or was revoked');
 });
+
+test('startBot queues the listener once', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->andReturn(['balance' => ['balance' => 100]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT100', 'is_running' => false]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)
+        ->call('startBot')
+        ->call('stopBot')
+        ->call('startBot');
+
+    Bus::assertDispatchedTimes(MasterListenerJob::class, 1);
+});

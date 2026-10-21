@@ -9,6 +9,13 @@ return [
     'max_stake' => (float) env('DERIV_MAX_STAKE', 1000),
 
     /*
+    | Listener workers supervisor runs (numprocs of trader-queue-listener). Every running master and
+    | every own-account user holds one for as long as its bot runs; ensure-listeners logs an error
+    | when more connections need a listener than this.
+    */
+    'listener_workers' => (int) env('DERIV_LISTENER_WORKERS', 15),
+
+    /*
     | Deriv's published REST limits and how this app shares them. Trade calls (buys, the master
     | listener) may use `trade_share` of each limit; reads (pages, settlement) only `read_share`.
     */
