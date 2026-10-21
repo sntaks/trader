@@ -31,7 +31,8 @@ return new class extends Migration
     }
 
     /**
-     * Reverse the migrations.
+     * Reverse the migrations. This fails once any copy row has no master, because the old column is not nullable;
+     * delete or reassign those rows first.
      */
     public function down(): void
     {
