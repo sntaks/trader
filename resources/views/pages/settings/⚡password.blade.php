@@ -14,7 +14,8 @@ new #[Title('Password settings')] class extends Component {
     public string $password_confirmation = '';
 
     /**
-     * Update the password for the currently authenticated user.
+     * Update the password for the currently authenticated user. Other devices are signed out, and this device's
+     * remember-me cookie is re-issued for the new password so AuthenticateSession keeps accepting it.
      */
     public function updatePassword(): void
     {
@@ -32,6 +33,8 @@ new #[Title('Password settings')] class extends Component {
         Auth::user()->update([
             'password' => $validated['password'],
         ]);
+
+        Auth::logoutOtherDevices($validated['password']);
 
         $this->reset('current_password', 'password', 'password_confirmation');
 

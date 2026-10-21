@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
@@ -50,4 +52,24 @@ test('changing your password keeps you signed in here', function () {
     $this->post('/_test/change-password')->assertNoContent();
 
     $this->get(route('profile.edit'))->assertOk();
+});
+
+test('changing your password keeps this device remembered', function () {
+    $user = User::factory()->create(['password' => Hash::make('password')]);
+    $guard = Auth::guard();
+    $recaller = $user->id.'|'.$user->getRememberToken().'|'.$guard->hashPasswordForCookie($user->password);
+
+    Livewire::withCookies([$guard->getRecallerName() => $recaller])
+        ->actingAs($user)
+        ->test('pages::settings.password')
+        ->set('current_password', 'password')
+        ->set('password', 'new-password')
+        ->set('password_confirmation', 'new-password')
+        ->call('updatePassword')
+        ->assertHasNoErrors();
+
+    $queued = Cookie::queued($guard->getRecallerName());
+
+    expect($queued?->getValue())->toBeString()
+        ->and(explode('|', (string) $queued?->getValue())[2] ?? null)->toBe($guard->hashPasswordForCookie($user->fresh()->password));
 });
