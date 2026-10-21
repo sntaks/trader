@@ -7,4 +7,19 @@ return [
     'oauth_url' => 'https://oauth.deriv.com/oauth2/authorize',
     'redirect_uri' => env('DERIV_REDIRECT_URI', ''),
     'max_stake' => (float) env('DERIV_MAX_STAKE', 1000),
+
+    /*
+    | Deriv's published REST limits and how this app shares them. Trade calls (buys, the master
+    | listener) may use `trade_share` of each limit; reads (pages, settlement) only `read_share`.
+    */
+    'rate_limits' => [
+        'ip_per_minute' => (int) env('DERIV_RATE_IP_PER_MINUTE', 300),
+        'ip_per_ten_minutes' => (int) env('DERIV_RATE_IP_PER_TEN_MINUTES', 1000),
+        'connection_per_minute' => (int) env('DERIV_RATE_CONNECTION_PER_MINUTE', 80),
+        'trade_share' => (float) env('DERIV_RATE_TRADE_SHARE', 0.95),
+        'read_share' => (float) env('DERIV_RATE_READ_SHARE', 0.6),
+        'trade_wait_seconds' => (int) env('DERIV_RATE_TRADE_WAIT_SECONDS', 5),
+        'default_cooldown_seconds' => (int) env('DERIV_RATE_DEFAULT_COOLDOWN_SECONDS', 30),
+        'max_cooldown_seconds' => (int) env('DERIV_RATE_MAX_COOLDOWN_SECONDS', 120),
+    ],
 ];
