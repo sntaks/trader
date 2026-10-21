@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Redis;
 $masterTrade = [
     'transaction_id' => 111111,
     'contract_type' => 'CALL',
-    'underlying' => 'R_50',
+    'symbol' => 'R_50',
     'duration' => 5,
     'duration_unit' => 't',
     'buy_price' => 2.50,
@@ -155,4 +155,26 @@ test('does not dispatch when traded symbol is filtered out', function () use ($m
     CopyTradeJob::dispatchSync($master->id, $masterTrade);
 
     Bus::assertNotDispatched(PlaceFollowerTradeJob::class);
+});
+
+test('selecting only a trade type no longer blocks every trade', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master, ['synthetic_indices' => ['DM']]);
+
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'contract_type' => 'DIGITMATCH', 'barrier' => '5']);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class);
+});
+
+test('a selected forex pair lets its deriv symbol through', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master, ['forex_pairs' => ['EUR/USD']]);
+
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'symbol' => 'frxEURUSD']);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class);
 });

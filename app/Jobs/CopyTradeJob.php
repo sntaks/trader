@@ -286,19 +286,10 @@ class CopyTradeJob implements ShouldQueue
 
     private function shouldFilterTrade(CopySetting $setting): bool
     {
-        $symbol = $this->masterTrade['underlying'] ?? $this->masterTrade['symbol'] ?? '';
-
-        $allowed = array_merge(
-            $setting->filter_markets ?? [],
-            $setting->synthetic_indices ?? [],
-            $setting->forex_pairs ?? [],
+        return ! $setting->allowsTrade(
+            (string) ($this->masterTrade['symbol'] ?? ''),
+            (string) ($this->masterTrade['contract_type'] ?? ''),
         );
-
-        if (empty($allowed)) {
-            return false;
-        }
-
-        return ! in_array($symbol, $allowed);
     }
 
     // ─── Consecutive outcome helpers ───────────────────────────────────────────

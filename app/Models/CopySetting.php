@@ -64,6 +64,49 @@ class CopySetting extends Model
         ];
     }
 
+    /** @var list<string> Deriv symbols offered in the market filter. */
+    public const MARKET_SYMBOLS = ['R_10', 'R_25', 'R_50', 'R_75', 'R_100', '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'];
+
+    /** @var array<string, string> Forex filter label (as stored in forex_pairs) => Deriv symbol. */
+    public const FOREX_SYMBOLS = [
+        'AUD/CAD' => 'frxAUDCAD',
+        'AUD/CHF' => 'frxAUDCHF',
+        'AUD/JPY' => 'frxAUDJPY',
+        'EUR/USD' => 'frxEURUSD',
+        'GBP/USD' => 'frxGBPUSD',
+        'USD/JPY' => 'frxUSDJPY',
+    ];
+
+    /** @var array<string, list<string>> Trade-type filter code (as stored in synthetic_indices) => contract types. */
+    public const TRADE_TYPES = [
+        'DM' => ['DIGITMATCH'],
+        'DD' => ['DIGITDIFF'],
+        'OE' => ['DIGITODD', 'DIGITEVEN'],
+        'UO' => ['DIGITUNDER', 'DIGITOVER'],
+        'TNT' => ['ONETOUCH', 'NOTOUCH'],
+        'RF' => ['CALL', 'PUT'],
+    ];
+
+    /**
+     * Whether the market and trade-type filters let this trade through.
+     * Each filter allows everything while empty; codes no longer offered are ignored.
+     */
+    public function allowsTrade(string $symbol, string $contractType): bool
+    {
+        $allowedSymbols = array_merge(
+            $this->filter_markets ?? [],
+            array_values(array_intersect_key(self::FOREX_SYMBOLS, array_flip($this->forex_pairs ?? []))),
+        );
+
+        if ($allowedSymbols !== [] && ! in_array($symbol, $allowedSymbols, true)) {
+            return false;
+        }
+
+        $allowedTypes = array_merge(...array_values(array_intersect_key(self::TRADE_TYPES, array_flip($this->synthetic_indices ?? []))));
+
+        return $allowedTypes === [] || in_array($contractType, $allowedTypes, true);
+    }
+
     /** Check if the given outcome history matches the follower pattern. */
     public function matchesPattern(array $recentOutcomes): bool
     {
