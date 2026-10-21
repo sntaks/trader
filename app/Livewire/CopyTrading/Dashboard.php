@@ -724,7 +724,7 @@ class Dashboard extends Component
             return [];
         }
 
-        $query = CopyTrade::query()->where('user_id', auth()->id());
+        $query = CopyTrade::query()->where('user_id', auth()->id())->where('status', '!=', CopyTrade::STATUS_FAILED);
 
         if ($setting->session_started_at) {
             $query->where('traded_at', '>=', $setting->session_started_at);
@@ -758,7 +758,7 @@ class Dashboard extends Component
     #[Computed]
     public function stats(): array
     {
-        $query = CopyTrade::query()->where('user_id', auth()->id());
+        $query = CopyTrade::query()->where('user_id', auth()->id())->where('status', '!=', CopyTrade::STATUS_FAILED);
 
         $sessionStart = $this->setting?->session_started_at;
 

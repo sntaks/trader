@@ -1109,7 +1109,12 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                         @if($visibleColumns['result'] ?? true)
                                         <td class="overflow-hidden px-3 py-2"
                                             :style="`width: ${colWidths.result}px; max-width: ${colWidths.result}px`">
-                                            @if($trade->is_win === true)
+                                            @if($trade->status === \App\Models\CopyTrade::STATUS_FAILED)
+                                                <span class="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 font-medium text-red-400" title="{{ $trade->failure_reason }}">
+                                                    <span class="h-1.5 w-1.5 rounded-full bg-red-400"></span>Failed
+                                                </span>
+                                                <p class="mt-0.5 truncate text-xs text-red-400">{{ $trade->failure_reason }}</p>
+                                            @elseif($trade->is_win === true)
                                                 <span class="inline-flex items-center gap-1 rounded-full bg-[#22C55E]/15 px-2 py-0.5 font-medium text-[#22C55E]">
                                                     <span class="h-1.5 w-1.5 rounded-full bg-[#22C55E]"></span>WIN
                                                 </span>
@@ -1119,7 +1124,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                                 </span>
                                             @else
                                                 <span class="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-amber-400">
-                                                    <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"></span>Open
+                                                    <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400"></span>{{ $trade->status === \App\Models\CopyTrade::STATUS_PENDING ? 'Pending' : 'Open' }}
                                                 </span>
                                             @endif
                                         </td>
