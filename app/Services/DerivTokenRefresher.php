@@ -47,21 +47,21 @@ class DerivTokenRefresher
     /**
      * Obtain a new access token. Returns false when it could not; a grant Deriv rejects also ends the
      * connection's bots, while a timeout, 429 or server error leaves everything for the next attempt.
-     * The passed model is reloaded in place.
+     * The passed model is reloaded in place, and a token another process renewed beyond $withinSeconds is left alone.
      */
-    public function refresh(DerivConnection $connection): bool
+    public function refresh(DerivConnection $connection, int $withinSeconds = self::REFRESH_MARGIN_SECONDS): bool
     {
         try {
             return Cache::lock("deriv:refresh:{$connection->id}", self::LOCK_SECONDS)
-                ->block(self::LOCK_WAIT_SECONDS, fn (): bool => $this->refreshLocked($connection));
+                ->block(self::LOCK_WAIT_SECONDS, fn (): bool => $this->refreshLocked($connection, $withinSeconds));
         } catch (LockTimeoutException) {
             $connection->refresh();
 
-            return ! $this->withinMargin($connection);
+            return ! $this->withinMargin($connection, $withinSeconds);
         }
     }
 
-    private function refreshLocked(DerivConnection $connection): bool
+    private function refreshLocked(DerivConnection $connection, int $withinSeconds): bool
     {
         $connection->refresh();
 
@@ -69,7 +69,7 @@ class DerivTokenRefresher
             return false;
         }
 
-        if (! $this->withinMargin($connection)) {
+        if (! $this->withinMargin($connection, $withinSeconds)) {
             return true;
         }
 
@@ -108,9 +108,9 @@ class DerivTokenRefresher
         return true;
     }
 
-    private function withinMargin(DerivConnection $connection): bool
+    private function withinMargin(DerivConnection $connection, int $seconds = self::REFRESH_MARGIN_SECONDS): bool
     {
         return $connection->expires_at !== null
-            && $connection->expires_at->lte(now()->addSeconds(self::REFRESH_MARGIN_SECONDS));
+            && $connection->expires_at->lte(now()->addSeconds($seconds));
     }
 }

@@ -20,7 +20,10 @@ class DerivApiService
     /** How long a last good read is kept to show while Deriv's rate limit is reached. */
     private const STALE_TTL_SECONDS = 86400;
 
-    public function __construct(private readonly DerivRateLimiter $rateLimiter) {}
+    public function __construct(
+        private readonly DerivRateLimiter $rateLimiter,
+        private readonly DerivTokenRefresher $tokenRefresher = new DerivTokenRefresher,
+    ) {}
 
     /**
      * Stream context for every Deriv socket: certificates and host names are always verified.
@@ -57,7 +60,7 @@ class DerivApiService
     public function getAccounts(DerivConnection $connection, string $priority = DerivRateLimiter::PRIORITY_READ): array
     {
         return $this->cachedCall($connection, 'accounts', 3600, function () use ($connection, $priority) {
-            $response = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+            $response = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection))
                 ->get(self::REST_BASE.'/accounts'));
 
             if ($response->status() === 401) {
@@ -79,7 +82,7 @@ class DerivApiService
      */
     public function resetDemoBalance(DerivConnection $connection, string $accountId): void
     {
-        $response = $this->restRequest($connection, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+        $response = $this->restRequest($connection, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders($this->restHeaders($connection))
             ->post(self::REST_BASE."/accounts/{$accountId}/reset-demo-balance"));
 
         if ($response->status() === 401) {
@@ -290,7 +293,7 @@ class DerivApiService
      */
     public function getOtpUrl(DerivConnection $connection, string $accountId, string $priority = DerivRateLimiter::PRIORITY_READ): string
     {
-        $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+        $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection))
             ->post(self::REST_BASE."/accounts/{$accountId}/otp"));
 
         if ($otpResp->status() === 401) {
@@ -320,11 +323,20 @@ class DerivApiService
 
     // ─── Internals ────────────────────────────────────────────────────────────
 
-    private function restHeaders(string $token): array
+    /**
+     * Headers for an authenticated call, refreshing the connection's token first when it is about to expire.
+     *
+     * @return array<string, string>
+     *
+     * @throws DerivAuthException When the sign-in has ended and could not be renewed.
+     */
+    private function restHeaders(DerivConnection $connection): array
     {
+        $this->tokenRefresher->ensureFresh($connection);
+
         return [
             'Deriv-App-ID' => (string) config('deriv.app_id'),
-            'Authorization' => 'Bearer '.$token,
+            'Authorization' => 'Bearer '.$connection->access_token,
             'Accept' => 'application/json',
         ];
     }

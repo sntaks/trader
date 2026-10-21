@@ -308,3 +308,14 @@ test('an accounts 401 throws DerivAuthException', function () {
     expect(fn () => app(DerivApiService::class)->getAccounts(DerivConnection::factory()->create()))
         ->toThrow(DerivAuthException::class);
 });
+
+test('getAccounts refreshes a token about to expire before calling deriv', function () {
+    Http::fake(['auth.deriv.com/oauth2/token' => Http::response(['access_token' => 'at_new', 'expires_in' => 3600])]);
+    $connection = DerivConnection::factory()->create(['access_token' => 'at_old', 'refresh_token' => 'rt_1', 'expires_at' => now()->addMinute()]);
+
+    app(DerivApiService::class)->getAccounts($connection);
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/accounts')
+        && $request->hasHeader('Authorization', 'Bearer at_new'));
+    Http::assertNotSent(fn (Request $request) => $request->hasHeader('Authorization', 'Bearer at_old'));
+});
