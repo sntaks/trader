@@ -102,10 +102,11 @@ class BrevoEmailService
     }
 
     /**
-     * Strip tags / HTML-escape any user-supplied name before it lands in a template.
+     * The name as stored, trimmed. Not escaped here: the HTML templates escape it with {{ }}, and
+     * escaping twice would show entities such as &#039; in the email.
      */
     private function safeName(string $name): string
     {
-        return htmlspecialchars(strip_tags(trim($name)), ENT_QUOTES, 'UTF-8');
+        return trim($name);
     }
 }

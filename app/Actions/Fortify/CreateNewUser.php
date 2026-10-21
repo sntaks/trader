@@ -41,8 +41,8 @@ class CreateNewUser implements CreatesNewUsers
 
         RateLimiter::hit($throttleKey, 60);
 
-        // Sanitize inputs before validation
-        $input['name'] = htmlspecialchars(strip_tags(trim($input['name'] ?? '')), ENT_QUOTES, 'UTF-8');
+        // Names are stored as typed; the name rule rejects markup and Blade escapes on output.
+        $input['name'] = trim($input['name'] ?? '');
         $input['email'] = strtolower(trim($input['email'] ?? ''));
 
         Validator::make($input, [

@@ -1,6 +1,6 @@
 {{ $appName }}
 
-Hi {{ $user->name }},
+Hi {!! $user->name !!},
 
 Thanks for signing up for {{ $appName }}.
 

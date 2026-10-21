@@ -75,3 +75,16 @@ test('callback links google_id to existing user matched by email', function () {
     $this->assertAuthenticatedAs($existing);
     expect(User::count())->toBe(1);
 });
+
+test('google names are stored raw and capped', function (string $googleName, string $expected) {
+    mockSocialite(fakeSocialiteUser(['name' => $googleName, 'email' => 'jane.doe@example.com']));
+
+    $this->get(route('auth.google.callback'));
+
+    expect(User::query()->where('email', 'jane.doe@example.com')->value('name'))->toBe($expected);
+})->with([
+    'apostrophe' => ["O'Brien", "O'Brien"],
+    'markup' => ['<b>Bo</b>', '<b>Bo</b>'],
+    'too long' => [str_repeat('a', 150), str_repeat('a', 100)],
+    'blank' => ['   ', 'jane.doe'],
+]);

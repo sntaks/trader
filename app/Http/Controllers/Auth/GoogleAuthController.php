@@ -9,6 +9,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
+use Laravel\Socialite\Contracts\User as SocialiteUser;
 use Laravel\Socialite\Facades\Socialite;
 
 class GoogleAuthController extends Controller
@@ -22,8 +23,8 @@ class GoogleAuthController extends Controller
     {
         $googleUser = Socialite::driver('google')->user();
 
-        $googleName = htmlspecialchars(strip_tags(trim($googleUser->getName() ?? '')), ENT_QUOTES, 'UTF-8');
         $googleEmail = strtolower(trim($googleUser->getEmail() ?? ''));
+        $googleName = $this->displayName($googleUser, $googleEmail);
 
         $user = User::where('google_id', $googleUser->getId())->first();
 
@@ -67,6 +68,17 @@ class GoogleAuthController extends Controller
         Auth::login($user, remember: true);
 
         return redirect()->intended(route('dashboard'));
+    }
+
+    /**
+     * Google's name as given, trimmed and capped at 100 characters; the email's local part when it is blank.
+     * Stored raw: Blade escapes it on output.
+     */
+    private function displayName(SocialiteUser $googleUser, string $email): string
+    {
+        $name = trim((string) $googleUser->getName());
+
+        return $name !== '' ? Str::limit($name, 100, '') : Str::before($email, '@');
     }
 
     private function generateAccountNumber(): string

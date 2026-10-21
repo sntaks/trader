@@ -25,3 +25,22 @@ test('new users can register', function () {
 
     $this->assertAuthenticated();
 });
+test('names with apostrophes can register', function () {
+    $this->post(route('register.store'), [
+        'name' => "Seán O'Brien-Smith",
+        'email' => 'sean@example.com',
+        'password' => 'password',
+        'password_confirmation' => 'password',
+    ])->assertSessionHasNoErrors();
+
+    $this->assertDatabaseHas('users', ['email' => 'sean@example.com', 'name' => "Seán O'Brien-Smith"]);
+});
+
+test('names with markup are still rejected', function () {
+    $this->post(route('register.store'), [
+        'name' => '<b>Bob</b>',
+        'email' => 'bob@example.com',
+        'password' => 'password',
+        'password_confirmation' => 'password',
+    ])->assertSessionHasErrors('name');
+});
