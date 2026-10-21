@@ -17,6 +17,21 @@ class DerivApiService
     /** Authenticated WebSocket base — OTP appended at runtime. */
     private const WS_BASE = 'wss://api.derivws.com/trading/v1/options';
 
+    /**
+     * Stream context for every Deriv socket: certificates and host names are always verified.
+     *
+     * @return resource
+     */
+    public static function streamContext(): mixed
+    {
+        return stream_context_create([
+            'ssl' => [
+                'verify_peer' => true,
+                'verify_peer_name' => true,
+            ],
+        ]);
+    }
+
     // ─── REST API ────────────────────────────────────────────────────────────
 
     /**
@@ -357,12 +372,7 @@ class DerivApiService
             throw new DerivApiException('OTP response contained no WebSocket URL');
         }
 
-        $context = stream_context_create([
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-            ],
-        ]);
+        $context = self::streamContext();
 
         try {
             $client = new Client($wsUrl, ['timeout' => 15, 'context' => $context]);

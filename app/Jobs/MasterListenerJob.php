@@ -107,9 +107,7 @@ class MasterListenerJob implements ShouldQueue
     {
         $host = (string) parse_url($wsUrl, PHP_URL_HOST);
 
-        $context = stream_context_create([
-            'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
-        ]);
+        $context = DerivApiService::streamContext();
 
         $socket = @stream_socket_client(
             "ssl://{$host}:443",
