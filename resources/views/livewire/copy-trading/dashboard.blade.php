@@ -164,7 +164,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     <input type="checkbox" checked disabled class="rounded border-zinc-600 bg-[#111827] text-[#1E45FC]" />
                     <div>
                         <p class="text-sm font-medium text-white">Clear trade history</p>
-                        <p class="text-xs text-zinc-500">All recorded trades for this session will be deleted</p>
+                        <p class="text-xs text-zinc-500">Stats and the trade list start fresh; past trades stay on record</p>
                     </div>
                 </label>
 

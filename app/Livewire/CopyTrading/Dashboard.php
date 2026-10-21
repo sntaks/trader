@@ -520,8 +520,6 @@ class Dashboard extends Component
 
         $isRunning = (bool) $setting->is_running;
 
-        CopyTrade::query()->where('user_id', auth()->id())->delete();
-
         if ($this->stopBotOnReset && $isRunning) {
             $setting->update(['is_running' => false]);
             $this->paused = false;
@@ -591,15 +589,13 @@ class Dashboard extends Component
             return;
         }
 
-        CopyTrade::query()->where('user_id', auth()->id())->delete();
-
         if ($setting->is_running) {
             $setting->update(['is_running' => false]);
         }
 
         $setting->update([
             'start_balance' => null,
-            'session_started_at' => null,
+            'session_started_at' => now(),
             'is_running' => false,
             'stop_reason' => null,
             'stopped_at_profit' => null,
