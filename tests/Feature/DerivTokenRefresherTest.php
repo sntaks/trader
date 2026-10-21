@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivAuthException;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
@@ -145,4 +146,22 @@ test('ensureFresh keeps going on a transient failure', function () {
     app(DerivTokenRefresher::class)->ensureFresh($connection);
 
     expect($connection->access_token)->toBe('at_old');
+});
+
+test('ensureFresh on a lapsed token keeps the grant when deriv is briefly down', function () {
+    fakeTokenEndpoint(Http::response('', 503));
+    $connection = expiringConnection(['expires_at' => now()->subMinutes(20)]);
+    $follower = CopySetting::factory()->create(['master_connection_id' => $connection->id, 'is_running' => true]);
+
+    try {
+        app(DerivTokenRefresher::class)->ensureFresh($connection);
+        $thrown = null;
+    } catch (Throwable $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->toBeInstanceOf(DerivApiException::class)
+        ->not->toBeInstanceOf(DerivAuthException::class)
+        ->and($connection->fresh()->refresh_token)->toBe('rt_old')
+        ->and($follower->fresh()->is_running)->toBeTrue();
 });

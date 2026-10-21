@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivAuthException;
 use App\Models\DerivConnection;
 use Illuminate\Contracts\Cache\LockTimeoutException;
@@ -32,16 +33,27 @@ class DerivTokenRefresher
 
     private const LOCK_WAIT_SECONDS = 10;
 
-    /** Refresh the token if it is about to expire; the call goes ahead on a transient failure. */
+    /**
+     * Refresh the token if it is about to expire; the call goes ahead on a transient failure while the token is still valid.
+     *
+     * @throws DerivAuthException When Deriv ended the grant and the owner must reconnect.
+     * @throws DerivApiException When the token has lapsed and Deriv could not renew it right now; retrying later can work.
+     */
     public function ensureFresh(DerivConnection $connection): void
     {
         if (! $connection->canRefresh() || ! $this->withinMargin($connection)) {
             return;
         }
 
-        if (! $this->refresh($connection) && $connection->isExpired()) {
+        if ($this->refresh($connection) || ! $connection->isExpired()) {
+            return;
+        }
+
+        if (! $connection->canRefresh()) {
             throw new DerivAuthException('The Deriv sign-in has ended. Reconnect your Deriv account.');
         }
+
+        throw new DerivApiException('Deriv sign-in is temporarily unavailable. Please try again shortly.');
     }
 
     /**
