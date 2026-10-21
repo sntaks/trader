@@ -1,6 +1,7 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Jobs\CopyTradeJob;
 use App\Jobs\PlaceFollowerTradeJob;
 use App\Jobs\SettleCopyTradeJob;
@@ -421,4 +422,21 @@ test('records when the copy should expire', function () use ($masterTrade) {
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
     expect(CopyTrade::sole()->expires_at->timestamp)->toBe(now()->addSeconds(10)->timestamp);
+});
+
+test('a buy past the trade cap fails with the rate-limit reason', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+    Cache::put(CopyTradeJob::patternConsumedKey($masterConn->id, $followerConn->user_id), true, 600);
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->andThrow(new DerivRateLimitedException('Deriv rate limit reached — copy skipped.'));
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['markPatternConsumed' => true])->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toBe('Deriv rate limit reached — copy skipped.')
+        ->and(Cache::has(CopyTradeJob::patternConsumedKey($masterConn->id, $followerConn->user_id)))->toBeFalse();
 });

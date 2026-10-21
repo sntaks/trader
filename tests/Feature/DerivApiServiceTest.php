@@ -1,21 +1,28 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\DerivRateLimiter;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use WebSocket\Client;
 
 beforeEach(function () {
+    $this->otpResponses = new ArrayObject([
+        'DOT999' => Http::response(['errors' => [['status' => 404, 'code' => 'AccountNotFound', 'message' => 'Account not found']]], 404),
+    ]);
+    $otpResponses = $this->otpResponses;
+
     Http::fake([
         'api.derivws.com/trading/v1/options/accounts' => Http::response(['data' => [
             ['account_id' => 'DOT100', 'currency' => 'USD', 'account_type' => 'demo', 'status' => 'active'],
             ['account_id' => 'DOT200', 'currency' => 'USD', 'account_type' => 'real', 'status' => 'active'],
         ]]),
-        'api.derivws.com/trading/v1/options/accounts/*/otp' => fn (Request $request) => basename(dirname($request->url())) === 'DOT999'
-            ? Http::response(['errors' => [['status' => 404, 'code' => 'AccountNotFound', 'message' => 'Account not found']]], 404)
-            : Http::response(['data' => ['url' => 'wss://api.derivws.com/trading/v1/options/ws/demo?otp='.basename(dirname($request->url()))]]),
+        'api.derivws.com/trading/v1/options/accounts/*/otp' => fn (Request $request) => $otpResponses[basename(dirname($request->url()))]
+            ?? Http::response(['data' => ['url' => 'wss://api.derivws.com/trading/v1/options/ws/demo?otp='.basename(dirname($request->url()))]]),
     ]);
 });
 
@@ -31,7 +38,7 @@ function fakeDerivSocket(array $responses, int $sockets = 1): array
     $record = new ArrayObject(['urls' => [], 'sent' => []]);
     $queue = new ArrayObject($responses);
 
-    $service = Mockery::mock(DerivApiService::class)->makePartial()->shouldAllowMockingProtectedMethods();
+    $service = Mockery::mock(DerivApiService::class, [app(DerivRateLimiter::class)])->makePartial()->shouldAllowMockingProtectedMethods();
 
     $service->shouldReceive('openSocket')->times($sockets)->andReturnUsing(function (string $url) use ($record, $queue) {
         $record['urls'] = [...$record['urls'], $url];
@@ -186,4 +193,70 @@ test('a ws call makes exactly one rest request', function () {
 
     Http::assertSentCount(1);
     Http::assertSent(fn (Request $request) => $request->method() === 'POST' && str_ends_with($request->url(), '/accounts/DOT100/otp'));
+});
+
+test('a 429 starts a cooldown and throws the rate-limit error', function () {
+    $this->freezeSecond();
+    $this->otpResponses['DOT100'] = Http::response(['errors' => [['status' => 429, 'code' => 'RateLimit', 'message' => 'Too many requests']]], 429, ['Retry-After' => '40']);
+    [$service] = fakeDerivSocket([], sockets: 0);
+
+    expect(fn () => $service->getBalance(DerivConnection::factory()->create(), 'DOT100'))
+        ->toThrow(DerivRateLimitedException::class, 'Deriv rate limit reached — try again shortly.');
+
+    expect(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBe(now()->addSeconds(40)->timestamp);
+});
+
+test('a RateLimit error code is treated like a 429', function () {
+    $this->freezeSecond();
+    $this->otpResponses['DOT100'] = Http::response(['errors' => [['status' => 400, 'code' => 'RateLimit', 'message' => 'Slow down']]], 400);
+    [$service] = fakeDerivSocket([], sockets: 0);
+
+    expect(fn () => $service->getBalance(DerivConnection::factory()->create(), 'DOT100'))
+        ->toThrow(DerivRateLimitedException::class);
+
+    expect(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBe(now()->addSeconds(30)->timestamp);
+});
+
+test('throttled reads serve the last good value', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 12.5]]]);
+    $connection = DerivConnection::factory()->create();
+
+    $fresh = $service->getBalance($connection, 'DOT100');
+    $service->clearCache($connection);
+    app(DerivRateLimiter::class)->coolDown(60);
+
+    expect($service->getBalance($connection, 'DOT100'))->toBe($fresh);
+});
+
+test('stale copies are only served when throttled', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 12.5]]]);
+    $connection = DerivConnection::factory()->create();
+
+    $service->getBalance($connection, 'DOT100');
+    $service->clearCache($connection);
+    $this->otpResponses['DOT100'] = Http::response(['errors' => [['status' => 401, 'code' => 'Unauthorized', 'message' => 'Token expired']]], 401);
+
+    expect(fn () => $service->getBalance($connection, 'DOT100'))
+        ->toThrow(DerivApiException::class, 'Token expired');
+});
+
+test('buys use trade priority', function () {
+    config(['deriv.rate_limits.read_share' => 0]);
+    [$service] = fakeDerivSocket([
+        ['proposal' => ['id' => 'p1']],
+        ['buy' => ['contract_id' => 11, 'transaction_id' => 22]],
+    ]);
+
+    $result = $service->buyContract(DerivConnection::factory()->create(), [
+        'contract_type' => 'CALL',
+        'symbol' => 'R_50',
+        'duration' => 5,
+        'duration_unit' => 't',
+        'stake' => 1.0,
+        'currency' => 'USD',
+        'follower_account_id' => 'DOT200',
+    ]);
+
+    expect($result['buy']['contract_id'])->toBe(11);
+    expect(fn () => $service->getBalance(DerivConnection::factory()->create(), 'DOT100'))->toThrow(DerivRateLimitedException::class);
 });
