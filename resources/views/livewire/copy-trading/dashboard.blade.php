@@ -363,6 +363,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         </div>
                     </div>
 
+                    @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+
                     <div class="flex gap-2 pt-1">
                         <flux:button wire:click="follow" wire:loading.attr="disabled" wire:target="follow" variant="primary">
                             <span wire:loading.remove wire:target="follow">Start Following</span>
@@ -404,6 +406,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <flux:button wire:click="enterOwnAccountMode" variant="filled" size="sm" class="w-full bg-amber-600 hover:bg-amber-500 text-white">
                             Configure Account Trading
                         </flux:button>
+                        @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
                     </div>
                 </div>
             @endif
@@ -565,6 +568,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
                     @if($showMasterList)
                         <div class="mt-4 space-y-3">
+                            @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                            @error('masterAccountId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
 
                             {{-- Own account option --}}
                             @php $ownConn = auth()->user()->derivConnection; @endphp
