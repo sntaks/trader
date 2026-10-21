@@ -7,10 +7,12 @@ use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use App\Services\MasterContractParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Str;
 
 class PlaceFollowerTradeJob implements ShouldQueue
 {
@@ -48,13 +50,19 @@ class PlaceFollowerTradeJob implements ShouldQueue
             return;
         }
 
+        $copyTrade = $this->claim();
+
+        if (! $copyTrade) {
+            return;
+        }
+
         $missing = array_filter(
             self::REQUIRED_TRADE_KEYS,
             fn (string $key) => ! isset($this->masterTrade[$key]) || $this->masterTrade[$key] === '',
         );
 
         if ($missing !== []) {
-            Log::warning("PlaceFollowerTradeJob: skipped for user {$this->userId} — master trade is missing ".implode(', ', $missing).'.');
+            $this->recordFailure($copyTrade, 'Master trade is missing '.implode(', ', $missing).'.');
 
             return;
         }
@@ -77,18 +85,10 @@ class PlaceFollowerTradeJob implements ShouldQueue
 
             $followerContractId = (string) ($result['buy']['contract_id'] ?? '');
 
-            $copyTrade = CopyTrade::create([
-                'user_id' => $this->userId,
-                'master_connection_id' => $this->masterConnectionId,
+            $copyTrade->update([
+                'status' => CopyTrade::STATUS_PLACED,
                 'follower_trx_id' => $result['buy']['transaction_id'] ?? null,
                 'follower_contract_id' => $followerContractId ?: null,
-                'master_trx_id' => $this->masterTrade['transaction_id'] ?? null,
-                'symbol' => $symbol,
-                'contract_type' => $this->masterTrade['contract_type'] ?? null,
-                'duration' => ($this->masterTrade['duration'] ?? '').($this->masterTrade['duration_unit'] ?? ''),
-                'barrier' => $this->masterTrade['barrier'] ?? null,
-                'stake' => $this->stake,
-                'traded_at' => now(),
             ]);
 
             if ($this->markPatternConsumed) {
@@ -108,7 +108,44 @@ class PlaceFollowerTradeJob implements ShouldQueue
 
             Log::info("PlaceFollowerTradeJob: trade placed for user {$this->userId} — {$symbol} stake={$this->stake}");
         } catch (\Throwable $e) {
-            Log::error("PlaceFollowerTradeJob: failed for user {$this->userId}: {$e->getMessage()}");
+            $this->recordFailure($copyTrade, $e->getMessage());
         }
+    }
+
+    /**
+     * Insert the pending row that reserves this (user, master contract) pair.
+     * Returns null when another attempt already holds it, so a duplicate job never reaches Deriv.
+     */
+    private function claim(): ?CopyTrade
+    {
+        try {
+            return CopyTrade::create([
+                'user_id' => $this->userId,
+                'master_connection_id' => $this->masterConnectionId,
+                'master_trx_id' => $this->masterTrade['transaction_id'] ?? null,
+                'master_contract_id' => $this->masterTrade['contract_id'] ?? null,
+                'symbol' => $this->masterTrade['symbol'] ?? null,
+                'contract_type' => $this->masterTrade['contract_type'] ?? null,
+                'duration' => ($this->masterTrade['duration'] ?? '').($this->masterTrade['duration_unit'] ?? ''),
+                'barrier' => $this->masterTrade['barrier'] ?? null,
+                'stake' => $this->stake,
+                'status' => CopyTrade::STATUS_PENDING,
+                'traded_at' => now(),
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            Log::warning("PlaceFollowerTradeJob: master contract {$this->masterTrade['contract_id']} already copied for user {$this->userId}; skipped duplicate.");
+
+            return null;
+        }
+    }
+
+    private function recordFailure(CopyTrade $copyTrade, string $reason): void
+    {
+        Log::error("PlaceFollowerTradeJob: failed for user {$this->userId}: {$reason}");
+
+        $copyTrade->update([
+            'status' => CopyTrade::STATUS_FAILED,
+            'failure_reason' => Str::limit($reason, 255),
+        ]);
     }
 }

@@ -3,6 +3,7 @@
 use App\Exceptions\DerivApiException;
 use App\Jobs\PlaceFollowerTradeJob;
 use App\Jobs\SettleCopyTradeJob;
+use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\DerivApiService;
@@ -118,7 +119,7 @@ test('skips and logs when follower connection is expired', function () use ($mas
     $this->assertDatabaseMissing('copy_trades', ['user_id' => $user->id]);
 });
 
-test('logs error and does not create CopyTrade when buyContract throws', function () use ($masterTrade) {
+test('records a failed copy when buyContract throws', function () use ($masterTrade) {
     Bus::fake([SettleCopyTradeJob::class]);
 
     $masterConn = DerivConnection::factory()->master()->create();
@@ -132,7 +133,7 @@ test('logs error and does not create CopyTrade when buyContract throws', functio
 
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
-    $this->assertDatabaseMissing('copy_trades', ['user_id' => $followerConn->user_id]);
+    $this->assertDatabaseHas('copy_trades', ['user_id' => $followerConn->user_id, 'status' => CopyTrade::STATUS_FAILED, 'failure_reason' => 'WS unavailable']);
 });
 
 test('skips a trade with the legacy payload shape', function () {
@@ -202,5 +203,85 @@ test('does not trade when the follower currency cannot be resolved', function ()
 
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
-    $this->assertDatabaseMissing('copy_trades', ['user_id' => $followerConn->user_id]);
+    $this->assertDatabaseHas('copy_trades', ['user_id' => $followerConn->user_id, 'status' => CopyTrade::STATUS_FAILED, 'failure_reason' => 'Account not found']);
+});
+
+test('records a pending claim before buying', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andReturnUsing(function () use ($followerConn) {
+        expect(CopyTrade::where('user_id', $followerConn->user_id)->sole())
+            ->status->toBe(CopyTrade::STATUS_PENDING)
+            ->master_contract_id->toBe('222222');
+
+        return ['buy' => ['transaction_id' => 99999, 'contract_id' => 'CTR-001']];
+    });
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::where('user_id', $followerConn->user_id)->sole())
+        ->status->toBe(CopyTrade::STATUS_PLACED)
+        ->follower_contract_id->toBe('CTR-001');
+});
+
+test('a second job for the same master contract does not buy', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andReturn(['buy' => ['transaction_id' => 99999, 'contract_id' => 'CTR-001']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::where('user_id', $followerConn->user_id)->count())->toBe(1);
+});
+
+test('records a failed buy with the reason', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->once()->andThrow(new DerivApiException('Insufficient balance.'));
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::where('user_id', $followerConn->user_id)->sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toBe('Insufficient balance.');
+    Bus::assertNotDispatched(SettleCopyTradeJob::class);
+});
+
+test('records a missing master field as a failed attempt', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldNotReceive('buyContract');
+
+    makeJob($followerConn, $masterConn->id, [...$masterTrade, 'duration' => null])->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::where('user_id', $followerConn->user_id)->sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toContain('duration');
+});
+
+test('existing rows count as placed', function () {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $trade = CopyTrade::create(['user_id' => $followerConn->user_id, 'master_connection_id' => $masterConn->id]);
+
+    expect($trade->fresh()->status)->toBe(CopyTrade::STATUS_PLACED);
 });
