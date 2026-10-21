@@ -419,6 +419,18 @@ class Dashboard extends Component
 
         $derivConnection = auth()->user()->derivConnection;
 
+        if ($derivConnection && ! $derivConnection->canRunUnattended()) {
+            $this->addError('bot', DerivConnection::UNATTENDED_REQUIRED_MESSAGE);
+
+            return;
+        }
+
+        if ($setting->masterConnection && ! $setting->masterConnection->canRunUnattended()) {
+            $this->addError('bot', DerivConnection::MASTER_UNATTENDED_REQUIRED_MESSAGE);
+
+            return;
+        }
+
         if ($setting->start_balance === null && $derivConnection) {
             try {
                 $balance = app(DerivApiService::class)->getBalance($derivConnection, $setting->follower_account_id, allowStale: false);

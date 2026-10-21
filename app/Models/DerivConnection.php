@@ -13,6 +13,10 @@ class DerivConnection extends Model
     /** @use HasFactory<DerivConnectionFactory> */
     use HasFactory;
 
+    public const UNATTENDED_REQUIRED_MESSAGE = 'Deriv sign-in sessions expire after an hour. Connect with an API token to copy trade.';
+
+    public const MASTER_UNATTENDED_REQUIRED_MESSAGE = 'This master\'s Deriv sign-in expires after an hour, so their trades can\'t be copied until they connect with an API token.';
+
     protected $fillable = [
         'user_id',
         'access_token',
@@ -46,6 +50,12 @@ class DerivConnection extends Model
     public function isExpired(): bool
     {
         return $this->expires_at !== null && $this->expires_at->isPast();
+    }
+
+    /** Whether a bot can rely on this connection for hours: an API token, or a sign-in that can renew itself. */
+    public function canRunUnattended(): bool
+    {
+        return $this->expires_at === null || $this->refresh_token !== null;
     }
 
     /** Whether this session can be renewed without the owner: an expiring token that came with a refresh token. */
