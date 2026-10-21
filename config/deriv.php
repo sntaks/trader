@@ -11,6 +11,12 @@ return [
     'oauth_url' => 'https://oauth.deriv.com/oauth2/authorize',
 
     /*
+    | A Personal Access Token from the Deriv account that owns both apps, with the `application_read`
+    | scope. It reads markup statistics for the admin dashboard and is never shown or sent elsewhere.
+    */
+    'partner_token' => env('DERIV_PARTNER_TOKEN'),
+
+    /*
     | Scopes requested at Deriv sign-in. `trade` covers every call this app makes. Deriv does not
     | document refresh tokens; add `offline_access` only after a test login shows Deriv accepts it.
     */

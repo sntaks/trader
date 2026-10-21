@@ -6,6 +6,7 @@ use App\Exceptions\DerivApiException;
 use App\Exceptions\DerivAuthException;
 use App\Exceptions\DerivRateLimitedException;
 use App\Models\DerivConnection;
+use Carbon\CarbonInterface;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -16,6 +17,13 @@ class DerivApiService
 {
     /** New REST API — reliable, no WebSocket needed. */
     private const REST_BASE = 'https://api.derivws.com/trading/v1/options';
+
+    /** Markup and volume per registered app; needs a token with the `application_read` scope. */
+    private const MARKUP_URL = 'https://api.derivws.com/applications/v1/markup-statistics';
+
+    public const MARKUP_TOKEN_MISSING = 'Set DERIV_PARTNER_TOKEN to show markup earnings.';
+
+    public const MARKUP_SCOPE_MISSING = 'The partner token lacks the application_read scope.';
 
     /** How long a last good read is kept to show while Deriv's rate limit is reached. */
     private const STALE_TTL_SECONDS = 86400;
@@ -115,6 +123,44 @@ class DerivApiService
             'Authorization' => 'Bearer '.$token,
             'Accept' => 'application/json',
         ])->get(self::REST_BASE.'/accounts'));
+    }
+
+    /**
+     * Markup the platform's apps earned between two UTC dates, both included, read with the partner token.
+     * A successful read is cached for ten minutes per range.
+     *
+     * @return array{total_app_markup_usd: float|int, total_volume_usd: float|int, total_payout_usd: float|int, total_contract_count: int, total_client_count: int, breakdown: list<array{app_id: string, app_markup_usd: float|int, volume_usd: float|int, payout_usd: float|int, contract_count: int, client_count: int}>}
+     *
+     * @throws DerivApiException
+     */
+    public function getMarkupStatistics(CarbonInterface $from, CarbonInterface $to): array
+    {
+        $token = config('deriv.partner_token');
+
+        if (blank($token)) {
+            throw new DerivApiException(self::MARKUP_TOKEN_MISSING);
+        }
+
+        $dateFrom = $from->copy()->utc()->toDateString();
+        $dateTo = $to->copy()->utc()->toDateString();
+
+        return Cache::remember("deriv:markup:{$dateFrom}:{$dateTo}", 600, function () use ($token, $dateFrom, $dateTo): array {
+            $response = $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
+                'Deriv-App-ID' => $this->appIdFor(isPat: true),
+                'Authorization' => 'Bearer '.$token,
+                'Accept' => 'application/json',
+            ])->get(self::MARKUP_URL, ['date_from' => $dateFrom, 'date_to' => $dateTo]));
+
+            if (in_array($response->status(), [401, 403], true)) {
+                throw new DerivApiException(self::MARKUP_SCOPE_MISSING);
+            }
+
+            if ($response->failed()) {
+                throw new DerivApiException($response->json('errors.0.message', 'Failed to load markup statistics.'));
+            }
+
+            return $response->json('data') ?? [];
+        });
     }
 
     // ─── WebSocket API ────────────────────────────────────────────────────────
