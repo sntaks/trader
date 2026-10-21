@@ -20,7 +20,10 @@ class DerivApiService
     /** How long a last good read is kept to show while Deriv's rate limit is reached. */
     private const STALE_TTL_SECONDS = 86400;
 
-    public function __construct(private readonly DerivRateLimiter $rateLimiter) {}
+    public function __construct(
+        private readonly DerivRateLimiter $rateLimiter,
+        private readonly DerivTokenRefresher $tokenRefresher = new DerivTokenRefresher,
+    ) {}
 
     /**
      * Stream context for every Deriv socket: certificates and host names are always verified.
@@ -57,7 +60,7 @@ class DerivApiService
     public function getAccounts(DerivConnection $connection, string $priority = DerivRateLimiter::PRIORITY_READ): array
     {
         return $this->cachedCall($connection, 'accounts', 3600, function () use ($connection, $priority) {
-            $response = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+            $response = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection))
                 ->get(self::REST_BASE.'/accounts'));
 
             if ($response->status() === 401) {
@@ -79,7 +82,7 @@ class DerivApiService
      */
     public function resetDemoBalance(DerivConnection $connection, string $accountId): void
     {
-        $response = $this->restRequest($connection, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+        $response = $this->restRequest($connection, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders($this->restHeaders($connection))
             ->post(self::REST_BASE."/accounts/{$accountId}/reset-demo-balance"));
 
         if ($response->status() === 401) {
@@ -105,10 +108,10 @@ class DerivApiService
      * @throws DerivRateLimitedException When the budget is spent or Deriv answers 429.
      * @throws DerivApiException When Deriv cannot be reached.
      */
-    public function checkPat(string $token, string $appId): Response
+    public function checkPat(string $token): Response
     {
         return $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
-            'Deriv-App-ID' => $appId,
+            'Deriv-App-ID' => $this->appIdFor(isPat: true),
             'Authorization' => 'Bearer '.$token,
             'Accept' => 'application/json',
         ])->get(self::REST_BASE.'/accounts'));
@@ -290,7 +293,7 @@ class DerivApiService
      */
     public function getOtpUrl(DerivConnection $connection, string $accountId, string $priority = DerivRateLimiter::PRIORITY_READ): string
     {
-        $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection->access_token))
+        $otpResp = $this->restRequest($connection, $priority, fn () => Http::withHeaders($this->restHeaders($connection))
             ->post(self::REST_BASE."/accounts/{$accountId}/otp"));
 
         if ($otpResp->status() === 401) {
@@ -318,15 +321,43 @@ class DerivApiService
         Cache::forever($versionKey, (int) Cache::get($versionKey, 0) + 1);
     }
 
+    /**
+     * Retire everything cached for this connection, stale copies included. For a token change
+     * (connect, reconnect, disconnect), where the old reads may belong to a different Deriv login.
+     */
+    public function forgetConnection(DerivConnection $connection): void
+    {
+        $this->clearCache($connection);
+
+        $generationKey = $this->staleGenerationKey($connection);
+
+        Cache::forever($generationKey, (int) Cache::get($generationKey, 0) + 1);
+    }
+
     // ─── Internals ────────────────────────────────────────────────────────────
 
-    private function restHeaders(string $token): array
+    /**
+     * Headers for an authenticated call, refreshing the connection's token first when it is about to expire.
+     *
+     * @return array<string, string>
+     *
+     * @throws DerivAuthException When the sign-in has ended and could not be renewed.
+     */
+    private function restHeaders(DerivConnection $connection): array
     {
+        $this->tokenRefresher->ensureFresh($connection);
+
         return [
-            'Deriv-App-ID' => (string) config('deriv.app_id'),
-            'Authorization' => 'Bearer '.$token,
+            'Deriv-App-ID' => $this->appIdFor($connection->isPat()),
+            'Authorization' => 'Bearer '.$connection->access_token,
             'Accept' => 'application/json',
         ];
+    }
+
+    /** PAT requests carry the PAT app's ID, which Deriv requires; sign-in requests carry the OAuth client ID. */
+    private function appIdFor(bool $isPat): string
+    {
+        return (string) ($isPat ? (config('deriv.app_id_pat') ?: config('deriv.app_id')) : config('deriv.app_id'));
     }
 
     /**
@@ -359,10 +390,12 @@ class DerivApiService
     /**
      * Cache a read for $ttl seconds, and keep its last good value for when Deriv's rate limit is reached.
      * The stale copy outlives clearCache() on purpose; it is served only for a rate-limit refusal.
+     * forgetConnection() retires it by moving to a new stale generation.
      */
     private function cachedCall(DerivConnection $connection, string $key, int $ttl, callable $fn, bool $allowStale = true): array
     {
-        $staleKey = "deriv:conn:{$connection->id}:stale:{$key}";
+        $generation = (int) Cache::get($this->staleGenerationKey($connection), 0);
+        $staleKey = "deriv:conn:{$connection->id}:stale:g{$generation}:{$key}";
 
         try {
             return Cache::remember($this->cacheKey($connection, $key), $ttl, function () use ($fn, $staleKey): array {
@@ -391,6 +424,11 @@ class DerivApiService
     private function versionKey(DerivConnection $connection): string
     {
         return "deriv:conn:{$connection->id}:version";
+    }
+
+    private function staleGenerationKey(DerivConnection $connection): string
+    {
+        return "deriv:conn:{$connection->id}:stale-generation";
     }
 
     private function wsCall(DerivConnection $connection, string $accountId, array $request): array

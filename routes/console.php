@@ -13,5 +13,8 @@ Artisan::command('inspire', function () {
 // worker was restarted, this ensures it comes back within 60 seconds.
 Schedule::command('deriv:ensure-listeners')->everyMinute()->withoutOverlapping();
 
+// Renew Deriv OAuth tokens before their one-hour lifetime runs out.
+Schedule::command('deriv:refresh-tokens')->everyFiveMinutes()->withoutOverlapping(10);
+
 // Settle copy trades SettleCopyTradeJob could not, e.g. contracts longer than its retries.
 Schedule::command('copy-trades:settle')->everyMinute()->withoutOverlapping(5);

@@ -1,10 +1,20 @@
 <?php
 
 return [
+    /*
+    | `app_id` is the OAuth app's client ID, sent with sign-in tokens. `app_id_pat` is the PAT app's ID,
+    | sent as Deriv-App-ID with Personal Access Tokens (falls back to `app_id` when empty). Markup is
+    | earned by whichever app a trade goes through, so both apps need it configured.
+    */
     'app_id' => env('DERIV_APP_ID'),
     'app_id_pat' => env('DERIV_APP_ID_PAT'),
-    'legacy_app_id' => env('DERIV_LEGACY_APP_ID', '1089'),
     'oauth_url' => 'https://oauth.deriv.com/oauth2/authorize',
+
+    /*
+    | Scopes requested at Deriv sign-in. `trade` covers every call this app makes. Deriv does not
+    | document refresh tokens; add `offline_access` only after a test login shows Deriv accepts it.
+    */
+    'oauth_scopes' => env('DERIV_OAUTH_SCOPES', 'trade'),
     'redirect_uri' => env('DERIV_REDIRECT_URI', ''),
     'max_stake' => (float) env('DERIV_MAX_STAKE', 1000),
 

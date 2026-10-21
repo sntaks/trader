@@ -18,9 +18,10 @@ class DerivConnectionFactory extends Factory
         return [
             'user_id' => User::factory(),
             'access_token' => 'ory_at_'.fake()->regexify('[a-zA-Z0-9]{64}'),
+            'refresh_token' => 'ory_rt_'.fake()->regexify('[a-zA-Z0-9]{64}'),
             'token_type' => 'Bearer',
             'expires_at' => now()->addHour(),
-            'scope' => 'trade account_manage',
+            'scope' => 'trade',
             'type' => 'follower',
         ];
     }
@@ -32,6 +33,6 @@ class DerivConnectionFactory extends Factory
 
     public function expired(): static
     {
-        return $this->state(['expires_at' => now()->subHour()]);
+        return $this->state(['expires_at' => now()->subHour(), 'refresh_token' => null]);
     }
 }

@@ -1,16 +1,13 @@
 <?php
 
-use App\Exceptions\DerivApiException;
 use App\Livewire\CopyTrading\Setup;
 use App\Models\DerivConnection;
 use App\Models\User;
-use App\Services\DerivLegacyApiService;
+use App\Services\DerivPatConnector;
 use App\Services\DerivRateLimiter;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
-
-use function Pest\Laravel\mock;
 
 test('setup shows deriv connection prompt when no account connected', function () {
     $user = User::factory()->create();
@@ -56,50 +53,21 @@ test('connectViaPat saves as pat when new rest api accepts the token', function 
     ]);
 });
 
-test('connectViaPat falls back to legacy ws api when rest api returns 401', function () {
+test('connectViaPat shows the token-rejected message when the new api returns 401', function () {
     $user = User::factory()->create();
 
     Http::fake([
         'api.derivws.com/*' => Http::response(null, 401),
     ]);
-
-    mock(DerivLegacyApiService::class)
-        ->shouldReceive('authorize')
-        ->once()
-        ->andReturn(['authorize' => ['loginid' => 'VRTC6948800', 'account_list' => []]]);
-
-    Livewire::actingAs($user)
-        ->test(Setup::class)
-        ->set('patToken', 'legacytoken12345')
-        ->call('connectViaPat')
-        ->assertSet('patSuccess', 'Deriv account connected successfully.')
-        ->assertSet('patToken', '');
-
-    $this->assertDatabaseHas('deriv_connections', [
-        'user_id' => $user->id,
-        'token_type' => 'pat_legacy',
-    ]);
-});
-
-test('connectViaPat shows error when both rest and legacy apis reject the token', function () {
-    $user = User::factory()->create();
-
-    Http::fake([
-        'api.derivws.com/*' => Http::response(null, 401),
-    ]);
-
-    mock(DerivLegacyApiService::class)
-        ->shouldReceive('authorize')
-        ->once()
-        ->andThrow(new DerivApiException('InvalidToken'));
 
     Livewire::actingAs($user)
         ->test(Setup::class)
         ->set('patToken', 'badtoken12345')
         ->call('connectViaPat')
-        ->assertSet('patError', 'Invalid token. Your token was not accepted by Deriv. Please check it and try again.')
+        ->assertSet('patError', DerivPatConnector::REJECTED_MESSAGE)
         ->assertSet('patSuccess', null);
 
+    Http::assertSentCount(1);
     $this->assertDatabaseMissing('deriv_connections', ['user_id' => $user->id]);
 });
 
@@ -113,59 +81,45 @@ test('connectViaPat validates token is required', function () {
         ->assertHasErrors(['patToken' => 'required']);
 });
 
-test('connectViaPat updates existing connection when user reconnects via legacy', function () {
+test('connectViaPat updates an existing connection', function () {
     $user = User::factory()->create();
     DerivConnection::factory()->create(['user_id' => $user->id, 'token_type' => 'Bearer']);
 
     Http::fake([
-        'api.derivws.com/*' => Http::response(null, 401),
+        'api.derivws.com/*' => Http::response(['data' => []], 200),
     ]);
-
-    mock(DerivLegacyApiService::class)
-        ->shouldReceive('authorize')
-        ->once()
-        ->andReturn(['authorize' => ['loginid' => 'CR4629260', 'account_list' => []]]);
 
     Livewire::actingAs($user)
         ->test(Setup::class)
-        ->set('patToken', 'legacynewtoken12')
+        ->set('patToken', 'newpattoken12345')
         ->call('connectViaPat')
         ->assertSet('patSuccess', 'Deriv account connected successfully.');
 
     $this->assertDatabaseCount('deriv_connections', 1);
     $this->assertDatabaseHas('deriv_connections', [
         'user_id' => $user->id,
-        'token_type' => 'pat_legacy',
+        'token_type' => 'pat',
     ]);
 });
 
-test('followerAccounts uses legacy service for pat_legacy connections', function () {
+test('connectViaPat is throttled after five attempts', function () {
     $user = User::factory()->create();
-    $connection = DerivConnection::factory()->create([
-        'user_id' => $user->id,
-        'token_type' => 'pat_legacy',
-    ]);
-
-    $accounts = [
-        ['account_id' => 'CR4629260', 'currency' => 'USD', 'account_type' => 'real', 'balance' => 150.0, 'landing_company_name' => 'svg'],
-        ['account_id' => 'VRTC6948800', 'currency' => 'USD', 'account_type' => 'demo', 'balance' => 10024.99, 'landing_company_name' => 'virtual'],
-    ];
-
-    mock(DerivLegacyApiService::class)
-        ->shouldReceive('getAccounts')
-        ->once()
-        ->with(Mockery::on(fn ($c) => $c->id === $connection->id))
-        ->andReturn($accounts);
-
+    Http::fake(['api.derivws.com/*' => Http::response(null, 401)]);
     $component = Livewire::actingAs($user)->test(Setup::class);
 
-    expect($component->instance()->followerAccounts)->toBe($accounts);
+    foreach (range(1, DerivPatConnector::MAX_ATTEMPTS) as $attempt) {
+        $component->set('patToken', 'badtoken12345')->call('connectViaPat');
+    }
+
+    $component->set('patToken', 'badtoken12345')->call('connectViaPat');
+
+    expect($component->get('patError'))->toStartWith('Too many attempts — try again in');
+    Http::assertSentCount(DerivPatConnector::MAX_ATTEMPTS);
 });
 
-test('pat connect reports a busy deriv instead of trying the legacy api', function () {
+test('pat connect reports a busy deriv', function () {
     $user = User::factory()->create();
     Http::fake(['api.derivws.com/*' => Http::response(['data' => []], 200)]);
-    mock(DerivLegacyApiService::class)->shouldNotReceive('authorize');
     app(DerivRateLimiter::class)->coolDown(60);
 
     Livewire::actingAs($user)
@@ -178,11 +132,10 @@ test('pat connect reports a busy deriv instead of trying the legacy api', functi
     expect(DerivConnection::query()->where('user_id', $user->id)->exists())->toBeFalse();
 });
 
-test('pat connect on a deriv 429 starts a cooldown instead of trying the legacy api', function () {
+test('pat connect on a deriv 429 starts a cooldown', function () {
     $this->freezeSecond();
     $user = User::factory()->create();
     Http::fake(['api.derivws.com/*' => Http::response(['errors' => [['code' => 'RateLimit', 'message' => 'Too many requests']]], 429)]);
-    mock(DerivLegacyApiService::class)->shouldNotReceive('authorize');
 
     Livewire::actingAs($user)
         ->test(Setup::class)

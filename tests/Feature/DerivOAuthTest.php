@@ -2,8 +2,10 @@
 
 use App\Models\DerivConnection;
 use App\Models\User;
+use App\Services\DerivPatConnector;
 use App\Services\DerivRateLimiter;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 test('unauthenticated users are redirected from connect route', function () {
@@ -218,3 +220,78 @@ test('pat connection starts a cooldown when deriv answers 429', function () {
 
     expect(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBe(now()->addSeconds(45)->timestamp);
 });
+
+test('redirect requests only the configured scopes', function () {
+    $user = User::factory()->create();
+
+    $location = $this->actingAs($user)->get(route('deriv.connect'))->headers->get('Location');
+    parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
+
+    expect($query['scope'])->toBe('trade');
+});
+
+/** Run the OAuth callback with a faked token response. */
+function completeOAuthCallback(User $user, array $tokenResponse): void
+{
+    Http::fake(['auth.deriv.com/oauth2/token' => Http::response($tokenResponse, 200)]);
+
+    test()->actingAs($user)
+        ->withSession(['deriv_oauth_state' => 'state-1', 'deriv_code_verifier' => 'verifier-1'])
+        ->get(route('deriv.callback', ['code' => 'code-1', 'state' => 'state-1']))
+        ->assertRedirect(route('dashboard'));
+}
+
+test('callback stores the refresh token encrypted', function () {
+    $user = User::factory()->create();
+
+    completeOAuthCallback($user, ['access_token' => 'ory_at_1', 'refresh_token' => 'ory_rt_abc', 'expires_in' => 3600]);
+
+    $connection = $user->fresh()->derivConnection;
+
+    expect($connection->refresh_token)->toBe('ory_rt_abc')
+        ->and(DB::table('deriv_connections')->value('refresh_token'))->not->toBe('ory_rt_abc')->not->toBeNull();
+});
+
+test('callback without a refresh token stores null', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id, 'refresh_token' => 'ory_rt_old']);
+
+    completeOAuthCallback($user, ['access_token' => 'ory_at_1', 'expires_in' => 3600]);
+
+    expect($user->fresh()->derivConnection->refresh_token)->toBeNull();
+});
+
+test('pat connection is throttled after five attempts', function () {
+    $user = User::factory()->create();
+    Http::fake(['api.derivws.com/*' => Http::response(null, 401)]);
+
+    foreach (range(1, DerivPatConnector::MAX_ATTEMPTS) as $attempt) {
+        $this->actingAs($user)->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0']);
+    }
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertRedirect(route('account'))
+        ->assertSessionHas('error', fn (string $message) => str_starts_with($message, 'Too many attempts — try again in'));
+
+    Http::assertSentCount(DerivPatConnector::MAX_ATTEMPTS);
+});
+
+test('pat connection rejects a refused token with the rejected message', function () {
+    $user = User::factory()->create();
+    Http::fake(['api.derivws.com/*' => Http::response(null, 401)]);
+
+    $this->actingAs($user)
+        ->post(route('deriv.connect.pat'), ['pat_token' => 'a1b2c3d4e5f6g7h8i9j0'])
+        ->assertSessionHas('error', DerivPatConnector::REJECTED_MESSAGE);
+});
+
+test('pat connection validation messages come from the form request', function (array $payload, string $field, string $message) {
+    $this->actingAs(User::factory()->create())
+        ->post(route('deriv.connect.pat'), $payload)
+        ->assertSessionHasErrors([$field => $message]);
+})->with([
+    'missing token' => [['pat_token' => ''], 'pat_token', 'Paste your Deriv API token.'],
+    'short token' => [['pat_token' => 'abc'], 'pat_token', 'That token is too short — copy the whole token from Deriv.'],
+    'unknown redirect' => [['pat_token' => 'a1b2c3d4e5f6g7h8i9j0', 'redirect_to' => 'elsewhere'], 'redirect_to', 'The selected redirect to is invalid.'],
+]);
