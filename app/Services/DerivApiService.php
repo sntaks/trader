@@ -25,6 +25,10 @@ class DerivApiService
 
     public const MARKUP_SCOPE_MISSING = 'The partner token lacks the application_read scope.';
 
+    public const MARKUP_TOKEN_REJECTED = 'Deriv rejected DERIV_PARTNER_TOKEN. Check the token, and that DERIV_APP_ID_PAT is the app it was created for.';
+
+    public const MARKUP_EMPTY = 'Deriv returned no markup statistics.';
+
     /** How long a last good read is kept to show while Deriv's rate limit is reached. */
     private const STALE_TTL_SECONDS = 86400;
 
@@ -151,7 +155,11 @@ class DerivApiService
                 'Accept' => 'application/json',
             ])->get(self::MARKUP_URL, ['date_from' => $dateFrom, 'date_to' => $dateTo]));
 
-            if (in_array($response->status(), [401, 403], true)) {
+            if ($response->status() === 401) {
+                throw new DerivApiException(self::MARKUP_TOKEN_REJECTED);
+            }
+
+            if ($response->status() === 403) {
                 throw new DerivApiException(self::MARKUP_SCOPE_MISSING);
             }
 
@@ -159,7 +167,13 @@ class DerivApiService
                 throw new DerivApiException($response->json('errors.0.message', 'Failed to load markup statistics.'));
             }
 
-            return $response->json('data') ?? [];
+            $data = $response->json('data');
+
+            if (! is_array($data) || ! isset($data['total_app_markup_usd'], $data['breakdown'])) {
+                throw new DerivApiException(self::MARKUP_EMPTY);
+            }
+
+            return $data;
         });
     }
 

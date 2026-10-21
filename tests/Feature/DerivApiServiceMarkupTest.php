@@ -48,13 +48,34 @@ test('markup statistics without a partner token throw without calling deriv', fu
     Http::assertNothingSent();
 });
 
-test('markup statistics explain a token without the scope', function (int $status) {
+test('markup statistics explain a token without the scope', function () {
     config(['deriv.partner_token' => 'pat_partner']);
-    Http::fake(['*' => Http::response(['errors' => [['status' => $status, 'code' => 'AccessDenied', 'message' => 'x']]], $status)]);
+    Http::fake(['*' => Http::response(['errors' => [['status' => 403, 'code' => 'AccessDenied', 'message' => 'x']]], 403)]);
 
     expect(fn () => app(DerivApiService::class)->getMarkupStatistics(now()->subDays(29), now()))
         ->toThrow(DerivApiException::class, DerivApiService::MARKUP_SCOPE_MISSING);
-})->with([401, 403]);
+});
+
+test('markup statistics explain a rejected token', function () {
+    config(['deriv.partner_token' => 'pat_partner']);
+    Http::fake(['*' => Http::response(['errors' => [['status' => 401, 'code' => 'Unauthorized', 'message' => 'x']]], 401)]);
+
+    expect(fn () => app(DerivApiService::class)->getMarkupStatistics(now()->subDays(29), now()))
+        ->toThrow(DerivApiException::class, DerivApiService::MARKUP_TOKEN_REJECTED);
+});
+
+test('a success without statistics is an error and is not cached', function (mixed $body) {
+    config(['deriv.partner_token' => 'pat_partner']);
+    Http::fakeSequence('*')->push($body)->push(['data' => markupData()]);
+    $service = app(DerivApiService::class);
+
+    expect(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))
+        ->toThrow(DerivApiException::class, DerivApiService::MARKUP_EMPTY)
+        ->and($service->getMarkupStatistics(now()->subDays(29), now())['total_app_markup_usd'])->toBe(12.5);
+})->with([
+    'no data' => [['meta' => []]],
+    'html' => ['<html>maintenance</html>'],
+]);
 
 test('markup statistics pass on deriv\'s message for other failures', function () {
     config(['deriv.partner_token' => 'pat_partner']);
