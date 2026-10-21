@@ -24,7 +24,9 @@ class CopyTradeJob implements ShouldQueue
     public function __construct(
         public readonly int $masterConnectionId,
         public readonly array $masterTrade,
-    ) {}
+    ) {
+        $this->onQueue('high');
+    }
 
     public function handle(): void
     {

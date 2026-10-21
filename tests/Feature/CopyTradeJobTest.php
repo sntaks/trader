@@ -354,3 +354,14 @@ test('no stop loss means no budget cap', function () use ($masterTrade) {
 
     Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 3.0);
 });
+
+test('follower trades go on the high queue', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->queue === 'high');
+});

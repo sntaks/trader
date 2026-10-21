@@ -34,7 +34,9 @@ class PlaceFollowerTradeJob implements ShouldQueue
         public readonly ?string $followerAccountId,
         public readonly bool $markPatternConsumed,
         public readonly bool $markWaitTrigger,
-    ) {}
+    ) {
+        $this->onQueue('high');
+    }
 
     public function handle(DerivApiService $deriv): void
     {
