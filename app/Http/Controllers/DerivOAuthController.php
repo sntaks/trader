@@ -112,7 +112,7 @@ class DerivOAuthController extends Controller
         $redirectTo = $validated['redirect_to'] ?? 'account';
 
         try {
-            $response = $derivApi->checkPat($token, (string) config('deriv.app_id'));
+            $response = $derivApi->checkPat($token);
         } catch (DerivRateLimitedException) {
             return redirect()->route($redirectTo)
                 ->with('error', 'Deriv is busy right now — try again in a minute.');

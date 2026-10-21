@@ -319,3 +319,26 @@ test('getAccounts refreshes a token about to expire before calling deriv', funct
         && $request->hasHeader('Authorization', 'Bearer at_new'));
     Http::assertNotSent(fn (Request $request) => $request->hasHeader('Authorization', 'Bearer at_old'));
 });
+
+test('rest calls send the app id that matches the token type', function (string $tokenType, ?string $patAppId, string $expected) {
+    config(['deriv.app_id' => 'oauth-app', 'deriv.app_id_pat' => $patAppId]);
+    $connection = DerivConnection::factory()->create(['token_type' => $tokenType]);
+
+    app(DerivApiService::class)->getAccounts($connection);
+
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/accounts')
+        && $request->hasHeader('Deriv-App-ID', $expected));
+})->with([
+    'pat' => ['pat', 'pat-app', 'pat-app'],
+    'pat without a pat app id' => ['pat', null, 'oauth-app'],
+    'oauth' => ['Bearer', 'pat-app', 'oauth-app'],
+]);
+
+test('checkPat sends the pat app id', function () {
+    config(['deriv.app_id' => 'oauth-app', 'deriv.app_id_pat' => 'pat-app']);
+
+    app(DerivApiService::class)->checkPat('a1b2c3d4e5f6g7h8i9j0');
+
+    Http::assertSent(fn (Request $request) => $request->hasHeader('Deriv-App-ID', 'pat-app')
+        && $request->hasHeader('Authorization', 'Bearer a1b2c3d4e5f6g7h8i9j0'));
+});

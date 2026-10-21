@@ -108,10 +108,10 @@ class DerivApiService
      * @throws DerivRateLimitedException When the budget is spent or Deriv answers 429.
      * @throws DerivApiException When Deriv cannot be reached.
      */
-    public function checkPat(string $token, string $appId): Response
+    public function checkPat(string $token): Response
     {
         return $this->restRequest(null, DerivRateLimiter::PRIORITY_READ, fn () => Http::withHeaders([
-            'Deriv-App-ID' => $appId,
+            'Deriv-App-ID' => $this->appIdFor(isPat: true),
             'Authorization' => 'Bearer '.$token,
             'Accept' => 'application/json',
         ])->get(self::REST_BASE.'/accounts'));
@@ -335,10 +335,16 @@ class DerivApiService
         $this->tokenRefresher->ensureFresh($connection);
 
         return [
-            'Deriv-App-ID' => (string) config('deriv.app_id'),
+            'Deriv-App-ID' => $this->appIdFor($connection->isPat()),
             'Authorization' => 'Bearer '.$connection->access_token,
             'Accept' => 'application/json',
         ];
+    }
+
+    /** PAT requests carry the PAT app's ID, which Deriv requires; sign-in requests carry the OAuth client ID. */
+    private function appIdFor(bool $isPat): string
+    {
+        return (string) ($isPat ? (config('deriv.app_id_pat') ?: config('deriv.app_id')) : config('deriv.app_id'));
     }
 
     /**

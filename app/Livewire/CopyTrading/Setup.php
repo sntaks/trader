@@ -173,7 +173,7 @@ class Setup extends Component
     private function tryNewRestApi(string $token): ?string
     {
         try {
-            $response = app(DerivApiService::class)->checkPat($token, (string) config('deriv.app_id_pat'));
+            $response = app(DerivApiService::class)->checkPat($token);
         } catch (DerivRateLimitedException $e) {
             throw $e;
         } catch (DerivApiException) {

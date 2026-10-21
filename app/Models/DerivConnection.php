@@ -80,6 +80,12 @@ class DerivConnection extends Model
             ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
     }
 
+    /** Whether this connection uses a Personal Access Token rather than a Deriv sign-in. */
+    public function isPat(): bool
+    {
+        return in_array($this->token_type, ['pat', 'pat_legacy'], true);
+    }
+
     public function isMaster(): bool
     {
         return $this->type === 'master';
