@@ -342,15 +342,7 @@ class Dashboard extends Component
 
     public function saveSettings(): void
     {
-        $this->validate([
-            'stake' => ['required', 'numeric', 'min:0.35', 'max:50000'],
-            'stakeMultiplier' => ['required', 'numeric', 'min:1', 'max:100'],
-            'takeProfit' => ['nullable', 'numeric', 'min:0'],
-            'stopLoss' => ['nullable', 'numeric', 'min:0'],
-            'followerPattern' => ['required', 'regex:/^[01]+$/', 'max:20'],
-            'maxMartingale' => ['integer', 'min:0', 'max:50'],
-            'doMartingaleAt' => ['integer', 'min:1', 'max:50'],
-        ]);
+        $this->validate($this->settingsRules());
 
         $setting = auth()->user()->copySetting;
 
@@ -484,6 +476,8 @@ class Dashboard extends Component
 
             return;
         }
+
+        $this->validate($this->settingsRules());
 
         $isRunning = (bool) $setting->is_running;
 
@@ -665,6 +659,33 @@ class Dashboard extends Component
         } else {
             $this->forexPairs[] = $pair;
         }
+    }
+
+    /**
+     * Bounds for every setting saved from the settings panel or the reset modal.
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    private function settingsRules(): array
+    {
+        return [
+            'stake' => ['required', 'numeric', 'min:0.35', 'max:'.config('deriv.max_stake')],
+            'stakeMultiplier' => ['required', 'numeric', 'min:1', 'max:100'],
+            'takeProfit' => ['nullable', 'numeric', 'gt:0'],
+            'stopLoss' => ['nullable', 'numeric', 'gt:0'],
+            'followerPattern' => ['required', 'regex:/^[01]+$/', 'max:20'],
+            'maxCompound' => ['integer', 'min:0', 'max:50'],
+            'waitForLoss' => ['integer', 'min:0', 'max:50'],
+            'maxMartingale' => ['integer', 'min:0', 'max:50'],
+            'doMartingaleAt' => ['integer', 'min:1', 'max:50'],
+            'ifHitMaxMartingale' => ['required', 'in:stop,continue'],
+            'filterMarkets' => ['array'],
+            'filterMarkets.*' => [Rule::in(CopySetting::MARKET_SYMBOLS)],
+            'syntheticIndices' => ['array'],
+            'syntheticIndices.*' => [Rule::in(array_keys(CopySetting::TRADE_TYPES))],
+            'forexPairs' => ['array'],
+            'forexPairs.*' => [Rule::in(array_keys(CopySetting::FOREX_SYMBOLS))],
+        ];
     }
 
     /** Public masters may not follow anyone: every follow edge then points at a master, so copy loops cannot form. */

@@ -168,7 +168,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 <div x-show="moreSettings" x-collapse class="pb-4 pt-2">
                     <p class="mb-3 text-xs text-zinc-500">Adjust settings here — they will be saved when you click Apply Reset.</p>
                     <div class="grid grid-cols-2 gap-3">
-                        <flux:input wire:model="stake" label="Stake (USD)" type="number" step="0.01" min="0.35" />
+                        <flux:input wire:model="stake" label="Stake (USD)" type="number" step="0.01" min="0.35" max="{{ config('deriv.max_stake') }}" />
                         <flux:input wire:model="stakeMultiplier" label="Stake Multiplier ×" type="number" step="0.1" min="1" />
                         <flux:input wire:model="takeProfit" label="Take Profit" type="number" min="0" placeholder="—" />
                         <flux:input wire:model="stopLoss" label="Stop Loss" type="number" min="0" placeholder="—" />
@@ -740,7 +740,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
                         {{-- Stake --}}
                         <div>
-                            <flux:input wire:model="stake" label="Default Stake (USD)" type="number" step="0.01" min="0.35" max="50000" />
+                            <flux:input wire:model="stake" label="Default Stake (USD)" type="number" step="0.01" min="0.35" max="{{ config('deriv.max_stake') }}" />
                             <flux:checkbox wire:model="followMasterStake" label="Follow Master Stake" class="mt-2" />
                             @error('stake') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
                         </div>

@@ -223,7 +223,20 @@ class CopyTradeJob implements ShouldQueue
 
     // ─── Stake calculation ─────────────────────────────────────────────────────
 
+    /** The stake to place, held between the Deriv minimum and the platform ceiling (`deriv.max_stake`). */
     private function calculateStake(CopySetting $setting, Collection $sessionTrades): float
+    {
+        $stake = $this->uncappedStake($setting, $sessionTrades);
+        $capped = max(0.35, min($stake, (float) config('deriv.max_stake')));
+
+        if ($capped !== $stake) {
+            Log::warning("CopyTradeJob: stake for user {$setting->user_id} held at {$capped} (computed {$stake}).");
+        }
+
+        return $capped;
+    }
+
+    private function uncappedStake(CopySetting $setting, Collection $sessionTrades): float
     {
         if ($setting->follow_master_stake) {
             return max(0.35, (float) ($this->masterTrade['buy_price'] ?? $setting->stake));
