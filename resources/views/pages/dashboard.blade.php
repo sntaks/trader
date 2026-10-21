@@ -77,7 +77,7 @@
                 </div>
                 <flux:text class="mt-1 text-xs text-zinc-400">
                     @if($copySetting)
-                        Following {{ $copySetting->masterConnection->user->name ?? 'a master' }}
+                        Following {{ $copySetting->masterConnection?->user?->name ?? 'no master' }}
                     @else
                         <a href="{{ route('copy-trading') }}" class="text-zinc-500 underline underline-offset-2 hover:text-zinc-700">Set up copy trading</a>
                     @endif

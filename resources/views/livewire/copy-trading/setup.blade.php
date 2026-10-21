@@ -131,8 +131,8 @@
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-4">
                     <div class="rounded-lg bg-[#111827] px-4 py-3">
                         <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">Following Master</p>
-                        <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection->user->name }}</p>
-                        <p class="text-xs text-zinc-500">{{ $setting->masterConnection->user->email }}</p>
+                        <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection?->user?->name ?? 'No master' }}</p>
+                        <p class="text-xs text-zinc-500">{{ $setting->masterConnection?->user?->email }}</p>
                     </div>
                     <div class="rounded-lg bg-[#111827] px-4 py-3">
                         <p class="text-xs font-medium uppercase tracking-wide text-zinc-400">Your Account</p>

@@ -130,6 +130,9 @@ class Dashboard extends Component
     /** Shown when the bot is started before a follower account is chosen; every copy is bought on that account. */
     private const FOLLOWER_ACCOUNT_REQUIRED = 'Choose the account to copy trades into before starting.';
 
+    /** Shown when the bot is started without a master, e.g. after the master disconnected. */
+    public const MASTER_REQUIRED = 'Choose a master to copy before starting.';
+
     public function mount(): void
     {
         $setting = auth()->user()->copySetting;
@@ -408,6 +411,12 @@ class Dashboard extends Component
         $setting = auth()->user()->copySetting;
 
         if (! $setting) {
+            return;
+        }
+
+        if (! $setting->master_connection_id) {
+            $this->addError('bot', self::MASTER_REQUIRED);
+
             return;
         }
 

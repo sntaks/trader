@@ -18,6 +18,7 @@ class EnsureListenersRunning extends Command
     {
         $activeConnectionIds = CopySetting::query()
             ->where('is_running', true)
+            ->whereNotNull('master_connection_id')
             ->distinct()
             ->pluck('master_connection_id');
 

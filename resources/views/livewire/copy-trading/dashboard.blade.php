@@ -47,6 +47,14 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <h3 class="text-lg font-bold text-amber-400">Deriv Connection Lost</h3>
                         <p class="text-xs text-zinc-400">Trading stopped automatically</p>
                     </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                        <flux:icon.user-minus class="size-6 text-amber-400" />
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-bold text-amber-400">Master Stopped Sharing</h3>
+                        <p class="text-xs text-zinc-400">Trading stopped automatically</p>
+                    </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
                         <flux:icon.link-slash class="size-6 text-amber-400" />
@@ -96,6 +104,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_REAUTH)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
                         A Deriv connection this bot depends on has expired or was revoked, or is a sign-in that only lasts an hour. Copying has stopped until it is reconnected with an API token.
+                    </div>
+                @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
+                    <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+                        The master you were copying disconnected their Deriv account. Choose another master to continue.
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
@@ -546,11 +558,13 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
             {{-- Master outcomes + slave pattern --}}
             <div class="flex-1 min-w-0 rounded-xl border border-[#1F2937] bg-[#0B1220] px-4 py-3 space-y-2">
-                @livewire('copy-trading.master-outcomes-ticker', [
-                    'connectionId'   => $setting->master_connection_id,
-                    'pattern'        => $setting->follower_pattern ?? '',
-                    'patternEnabled' => (bool) $setting->pattern_enabled,
-                ], key('ticker-'.$setting->master_connection_id))
+                @if($setting->master_connection_id)
+                    @livewire('copy-trading.master-outcomes-ticker', [
+                        'connectionId'   => $setting->master_connection_id,
+                        'pattern'        => $setting->follower_pattern ?? '',
+                        'patternEnabled' => (bool) $setting->pattern_enabled,
+                    ], key('ticker-'.$setting->master_connection_id))
+                @endif
 
                 {{-- Slave pattern display --}}
                 @if($setting->pattern_enabled && $setting->follower_pattern)
