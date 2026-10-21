@@ -440,3 +440,18 @@ test('a buy past the trade cap fails with the rate-limit reason', function () us
         ->failure_reason->toBe('Deriv rate limit reached — copy skipped.')
         ->and(Cache::has(CopyTradeJob::patternConsumedKey($masterConn->id, $followerConn->user_id)))->toBeFalse();
 });
+
+test('a copy whose master was deleted after fan-out is skipped without an error', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+    $job = makeJob($followerConn, $masterConn->id, $masterTrade);
+    $masterConn->delete();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->never();
+
+    $job->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::query()->count())->toBe(0);
+});
