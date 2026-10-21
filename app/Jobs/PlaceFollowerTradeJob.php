@@ -123,8 +123,8 @@ class PlaceFollowerTradeJob implements ShouldQueue
             }
 
             if ($followerContractId) {
-                SettleCopyTradeJob::dispatch($copyTrade->id, $followerConnection->id, $followerContractId)
-                    ->delay(now()->addSeconds(5));
+                SettleCopyTradeJob::dispatch($copyTrade->id)
+                    ->delay((int) SettleCopyTradeJob::expectedExpiry($this->masterTrade)->totalSeconds + 3);
             }
 
             Log::info("PlaceFollowerTradeJob: trade placed for user {$this->userId} — {$symbol} stake={$stake}");
@@ -178,6 +178,7 @@ class PlaceFollowerTradeJob implements ShouldQueue
                 'master_connection_id' => $this->masterConnectionId,
                 'master_trx_id' => $this->masterTrade['transaction_id'] ?? null,
                 'master_contract_id' => $this->masterTrade['contract_id'] ?? null,
+                'follower_account_id' => $this->followerAccountId,
                 'symbol' => $this->masterTrade['symbol'] ?? null,
                 'contract_type' => $this->masterTrade['contract_type'] ?? null,
                 'duration' => ($this->masterTrade['duration'] ?? '').($this->masterTrade['duration_unit'] ?? ''),
