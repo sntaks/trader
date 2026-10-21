@@ -14,8 +14,13 @@ class SettleOpenCopyTrades extends Command
 
     protected $description = 'Settle placed copy trades that are still open, from each follower account\'s profit table';
 
-    /** Trades younger than this are left to SettleCopyTradeJob. */
-    private const MIN_AGE_SECONDS = 60;
+    /** Trades are left to SettleCopyTradeJob until this long after their expected expiry. */
+    private const GRACE_SECONDS = 60;
+
+    /** Rows per profit table page (Deriv's maximum) and the most pages read per account per run. */
+    private const PAGE_SIZE = 500;
+
+    private const MAX_PAGES = 4;
 
     /** How far before the oldest open trade the profit table is read, to cover clock skew. */
     private const DATE_FROM_MARGIN_SECONDS = 60;
@@ -28,7 +33,9 @@ class SettleOpenCopyTrades extends Command
             ->whereNull('is_win')
             ->whereNotNull('follower_contract_id')
             ->whereNotNull('follower_account_id')
-            ->where('traded_at', '<=', now()->subSeconds(self::MIN_AGE_SECONDS))
+            ->where(fn ($query) => $query
+                ->where('expires_at', '<=', now()->subSeconds(self::GRACE_SECONDS))
+                ->orWhere(fn ($query) => $query->whereNull('expires_at')->where('traded_at', '<=', now()->subSeconds(self::GRACE_SECONDS))))
             ->orderBy('traded_at')
             ->get()
             ->groupBy(fn (CopyTrade $trade) => "{$trade->user_id}|{$trade->follower_account_id}");
@@ -45,7 +52,8 @@ class SettleOpenCopyTrades extends Command
     }
 
     /**
-     * Settle one follower account's open trades from a single profit table read.
+     * Settle one follower account's expired open trades from its profit table, reading up to MAX_PAGES pages
+     * until every trade is found. A failed read settles whatever earlier pages matched.
      *
      * @param  Collection<int, CopyTrade>  $trades  Oldest first, all on the same user and account.
      */
@@ -58,21 +66,25 @@ class SettleOpenCopyTrades extends Command
             return 0;
         }
 
+        $dateFrom = $first->traded_at->timestamp - self::DATE_FROM_MARGIN_SECONDS;
+        $wanted = $trades->pluck('follower_contract_id')->flip();
+        $byContract = collect();
+
         try {
-            $transactions = $deriv->getProfitTableSince(
-                $connection,
-                $first->follower_account_id,
-                $first->traded_at->timestamp - self::DATE_FROM_MARGIN_SECONDS,
-            );
+            for ($page = 0; $page < self::MAX_PAGES && $byContract->count() < $wanted->count(); $page++) {
+                $rows = $deriv->getProfitTableSince($connection, $first->follower_account_id, $dateFrom, self::PAGE_SIZE, $page * self::PAGE_SIZE);
+
+                $byContract = $byContract->replace(collect($rows)
+                    ->filter(fn (array $row) => isset($row['contract_id']) && $wanted->has((string) $row['contract_id']))
+                    ->keyBy(fn (array $row) => (string) $row['contract_id']));
+
+                if (count($rows) < self::PAGE_SIZE) {
+                    break;
+                }
+            }
         } catch (\Throwable $e) {
             Log::warning("copy-trades:settle: profit table failed for user #{$first->user_id} on {$first->follower_account_id}: {$e->getMessage()}");
-
-            return 0;
         }
-
-        $byContract = collect($transactions)
-            ->filter(fn (array $row) => isset($row['contract_id']))
-            ->keyBy(fn (array $row) => (string) $row['contract_id']);
 
         $settled = 0;
 

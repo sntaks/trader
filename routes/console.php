@@ -14,4 +14,4 @@ Artisan::command('inspire', function () {
 Schedule::command('deriv:ensure-listeners')->everyMinute()->withoutOverlapping();
 
 // Settle copy trades SettleCopyTradeJob could not, e.g. contracts longer than its retries.
-Schedule::command('copy-trades:settle')->everyMinute()->withoutOverlapping();
+Schedule::command('copy-trades:settle')->everyMinute()->withoutOverlapping(5);

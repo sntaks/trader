@@ -406,3 +406,19 @@ test('stores the follower account on the copy', function () use ($masterTrade) {
 
     expect(CopyTrade::sole()->follower_account_id)->toBe('DOT200');
 });
+
+test('records when the copy should expire', function () use ($masterTrade) {
+    Bus::fake([SettleCopyTradeJob::class]);
+    $this->freezeTime();
+
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
+    $mock->shouldReceive('buyContract')->andReturn(['buy' => ['transaction_id' => 1, 'contract_id' => 'CTR-1']]);
+
+    makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole()->expires_at->timestamp)->toBe(now()->addSeconds(10)->timestamp);
+});

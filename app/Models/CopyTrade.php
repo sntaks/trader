@@ -39,6 +39,7 @@ class CopyTrade extends Model
         'status',
         'failure_reason',
         'traded_at',
+        'expires_at',
     ];
 
     /** Defaults that match the column defaults, so freshly created models agree with the database. */
@@ -55,6 +56,7 @@ class CopyTrade extends Model
             'sell_at_market' => 'boolean',
             'is_win' => 'boolean',
             'traded_at' => 'datetime',
+            'expires_at' => 'datetime',
         ];
     }
 

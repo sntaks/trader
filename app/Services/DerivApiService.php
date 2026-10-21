@@ -133,12 +133,13 @@ class DerivApiService
      *
      * @throws DerivApiException
      */
-    public function getProfitTableSince(DerivConnection $connection, string $accountId, int $dateFrom, int $limit = 500): array
+    public function getProfitTableSince(DerivConnection $connection, string $accountId, int $dateFrom, int $limit = 500, int $offset = 0): array
     {
         $response = $this->wsCall($connection, $accountId, [
             'profit_table' => 1,
             'date_from' => (string) $dateFrom,
             'limit' => $limit,
+            'offset' => $offset,
             'sort' => 'ASC',
         ]);
 

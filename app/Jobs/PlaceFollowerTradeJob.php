@@ -111,6 +111,7 @@ class PlaceFollowerTradeJob implements ShouldQueue
                 'status' => CopyTrade::STATUS_PLACED,
                 'follower_trx_id' => $result['buy']['transaction_id'] ?? null,
                 'follower_contract_id' => $followerContractId ?: null,
+                'expires_at' => now()->add(SettleCopyTradeJob::expectedExpiry($this->masterTrade)),
             ]);
 
             if ($this->markPatternConsumed) {
