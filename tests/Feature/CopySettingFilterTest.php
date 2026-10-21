@@ -54,8 +54,16 @@ test('requires both symbol and type to match', function () {
         ->and($setting->allowsTrade('R_10', 'DIGITMATCH'))->toBeTrue();
 });
 
-test('ignores dropped trade type codes', function () {
+test('blocks every trade when only dropped trade type codes are saved', function () {
     $setting = filteredSetting(['synthetic_indices' => ['HILO', 'RCP']]);
 
-    expect($setting->allowsTrade('R_50', 'DIGITMATCH'))->toBeTrue();
+    expect($setting->allowsTrade('R_50', 'DIGITMATCH'))->toBeFalse()
+        ->and($setting->allowsTrade('R_50', 'CALL'))->toBeFalse();
+});
+
+test('ignores dropped codes saved alongside known ones', function () {
+    $setting = filteredSetting(['synthetic_indices' => ['HILO', 'DM']]);
+
+    expect($setting->allowsTrade('R_50', 'DIGITMATCH'))->toBeTrue()
+        ->and($setting->allowsTrade('R_50', 'DIGITDIFF'))->toBeFalse();
 });

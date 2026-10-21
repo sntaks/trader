@@ -24,8 +24,14 @@ class MasterContractParser
     /** @var list<string> */
     private const RISE_FALL_TYPES = ['CALL', 'PUT', 'CALLE', 'PUTE'];
 
+    /** Version stamped on every parsed trade; jobs reject payloads without it (e.g. queued by the old listener). */
+    public const SHAPE_VERSION = 2;
+
+    /** @var list<string> The barrier is the predicted last digit. */
+    private const DIGIT_BARRIER_TYPES = ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'];
+
     /** @var list<string> */
-    private const SINGLE_BARRIER_TYPES = ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'ONETOUCH', 'NOTOUCH'];
+    private const TOUCH_TYPES = ['ONETOUCH', 'NOTOUCH'];
 
     /** @var list<string> */
     private const DOUBLE_BARRIER_TYPES = ['EXPIRYRANGE', 'EXPIRYMISS', 'RANGE', 'UPORDOWN'];
@@ -39,7 +45,7 @@ class MasterContractParser
     /**
      * @param  array<string, mixed>  $transaction  The master's `transaction` stream message (action = buy).
      * @param  array<string, mixed>  $contract  The `proposal_open_contract` payload for the same contract.
-     * @return array{contract_id: string, transaction_id: string|null, symbol: string, contract_type: string, duration: int, duration_unit: string, barrier: string|null, barrier2: string|null, buy_price: float|null}
+     * @return array{contract_id: string, transaction_id: string|null, symbol: string, contract_type: string, duration: int, duration_unit: string, barrier: string|null, barrier2: string|null, buy_price: float|null, shape_version: int}
      *
      * @throws UncopyableTradeException
      */
@@ -82,6 +88,7 @@ class MasterContractParser
             'barrier' => $barrier,
             'barrier2' => $barrier2,
             'buy_price' => self::buyPrice($transaction, $contract),
+            'shape_version' => self::SHAPE_VERSION,
         ];
     }
 
@@ -127,14 +134,23 @@ class MasterContractParser
      */
     private static function barriers(string $contractType, array $transaction, array $contract, string $contractId): array
     {
-        if (in_array($contractType, self::SINGLE_BARRIER_TYPES, true)) {
-            $barrier = self::firstFilled($contract['barrier'] ?? null, $transaction['barrier'] ?? null);
+        $barrier = self::firstFilled($contract['barrier'] ?? null, $transaction['barrier'] ?? null);
+        $entrySpot = self::firstFilled($contract['entry_spot'] ?? null, $contract['entry_tick'] ?? null);
 
+        if (in_array($contractType, self::DIGIT_BARRIER_TYPES, true)) {
             if ($barrier === null) {
                 throw new UncopyableTradeException("{$contractType} contract #{$contractId} has no barrier.");
             }
 
             return [$barrier, null];
+        }
+
+        if (in_array($contractType, self::TOUCH_TYPES, true)) {
+            if ($barrier === null) {
+                throw new UncopyableTradeException("{$contractType} contract #{$contractId} has no barrier.");
+            }
+
+            return [self::relativeBarrier($barrier, $entrySpot, $contractId), null];
         }
 
         if (in_array($contractType, self::DOUBLE_BARRIER_TYPES, true)) {
@@ -145,18 +161,60 @@ class MasterContractParser
                 throw new UncopyableTradeException("{$contractType} contract #{$contractId} is missing a barrier.");
             }
 
-            return [$high, $low];
+            return [
+                self::relativeBarrier($high, $entrySpot, $contractId),
+                self::relativeBarrier($low, $entrySpot, $contractId),
+            ];
         }
 
-        if (in_array($contractType, self::RISE_FALL_TYPES, true)) {
-            $shortcode = self::firstFilled($contract['shortcode'] ?? null);
-
-            if ($shortcode !== null && self::shortcodeBarrier($shortcode) !== self::RISE_FALL_SHORTCODE_BARRIER) {
-                throw new UncopyableTradeException("Higher/Lower contract #{$contractId} is not supported.");
-            }
+        if (in_array($contractType, self::RISE_FALL_TYPES, true) && ! self::isRiseFall($contract, $barrier, $entrySpot)) {
+            throw new UncopyableTradeException("Contract #{$contractId} is not provably Rise/Fall (Higher/Lower is not supported).");
         }
 
         return [null, null];
+    }
+
+    /**
+     * Rise/Fall and Higher/Lower share contract types. Prove Rise/Fall from the shortcode's
+     * zero relative barrier, or else from a barrier equal to the entry spot; anything else is rejected.
+     *
+     * @param  array<string, mixed>  $contract
+     */
+    private static function isRiseFall(array $contract, ?string $barrier, ?string $entrySpot): bool
+    {
+        $shortcode = self::firstFilled($contract['shortcode'] ?? null);
+
+        if ($shortcode !== null) {
+            return self::shortcodeBarrier($shortcode) === self::RISE_FALL_SHORTCODE_BARRIER;
+        }
+
+        return is_numeric($barrier) && is_numeric($entrySpot) && (float) $barrier === (float) $entrySpot;
+    }
+
+    /**
+     * Contract details may report barriers as absolute prices. A follower buys later at a
+     * different spot, so convert to the master's offset from entry (e.g. "+0.50").
+     */
+    private static function relativeBarrier(string $barrier, ?string $entrySpot, string $contractId): string
+    {
+        if (str_starts_with($barrier, '+') || str_starts_with($barrier, '-')) {
+            return $barrier;
+        }
+
+        if (! is_numeric($barrier) || ! is_numeric($entrySpot)) {
+            throw new UncopyableTradeException("Cannot derive a relative barrier for contract #{$contractId} without an entry spot.");
+        }
+
+        $decimals = max(self::decimalPlaces($barrier), self::decimalPlaces($entrySpot));
+
+        return sprintf("%+.{$decimals}f", round((float) $barrier - (float) $entrySpot, $decimals));
+    }
+
+    private static function decimalPlaces(string $number): int
+    {
+        $dot = strpos($number, '.');
+
+        return $dot === false ? 0 : strlen($number) - $dot - 1;
     }
 
     /** Shortcodes end in `_{barrier}_{barrier2}`; symbols may contain underscores, so read from the end. */

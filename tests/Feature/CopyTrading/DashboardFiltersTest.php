@@ -18,3 +18,12 @@ test('settings offer trade types and forex labels from the copy setting filters'
         ->assertSee("toggleSynthetic('DM')", false)
         ->assertDontSee("toggleSynthetic('HILO')", false);
 });
+
+test('drops trade type codes that are no longer offered when loading settings', function () {
+    $user = User::factory()->create();
+    CopySetting::factory()->create(['user_id' => $user->id, 'synthetic_indices' => ['HILO', 'DM', 'RCP']]);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->assertSet('syntheticIndices', ['DM']);
+});

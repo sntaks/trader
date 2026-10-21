@@ -138,7 +138,7 @@ class Dashboard extends Component
         $this->followerPattern = $setting->follower_pattern ?? '111';
         $this->patternEnabled = $setting->pattern_enabled ?? true;
         $this->filterMarkets = $setting->filter_markets ?? [];
-        $this->syntheticIndices = $setting->synthetic_indices ?? [];
+        $this->syntheticIndices = CopySetting::knownTradeTypeCodes($setting->synthetic_indices ?? []);
         $this->forexPairs = $setting->forex_pairs ?? [];
         $this->masterAccountId = $setting->master_account_id;
         $this->followerAccountId = $setting->follower_account_id;

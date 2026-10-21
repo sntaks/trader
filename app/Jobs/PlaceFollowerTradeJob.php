@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use App\Services\MasterContractParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -38,6 +39,12 @@ class PlaceFollowerTradeJob implements ShouldQueue
         $followerConnection = DerivConnection::find($this->followerConnectionId);
 
         if (! $followerConnection || $followerConnection->isExpired()) {
+            return;
+        }
+
+        if (($this->masterTrade['shape_version'] ?? null) !== MasterContractParser::SHAPE_VERSION) {
+            Log::warning("PlaceFollowerTradeJob: skipped for user {$this->userId} — master trade lacks the current shape (queued by an older listener).");
+
             return;
         }
 

@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /*
@@ -14,7 +15,7 @@ use Tests\TestCase;
 */
 
 pest()->extend(TestCase::class)
-    ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)
+    ->use(RefreshDatabase::class)
     ->in('Feature');
 
 /*
@@ -46,4 +47,30 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/**
+ * A copy-trade payload exactly as the pre-Phase-1 listener produced it: the raw
+ * transaction merged with defaulted contract fields (see MasterListenerJob at af147d8).
+ *
+ * @return array<string, mixed>
+ */
+function legacyListenerTrade(): array
+{
+    $transaction = [
+        'action' => 'buy',
+        'amount' => -2.5,
+        'balance' => 997.5,
+        'contract_id' => 222222,
+        'symbol' => 'R_50',
+        'transaction_id' => 111111,
+    ];
+
+    return array_merge($transaction, [
+        'duration' => 1,
+        'duration_unit' => 't',
+        'contract_type' => 'CALL',
+        'symbol' => 'R_50',
+        'barrier' => '1234.56',
+    ]);
 }

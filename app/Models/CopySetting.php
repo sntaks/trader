@@ -89,10 +89,17 @@ class CopySetting extends Model
 
     /**
      * Whether the market and trade-type filters let this trade through.
-     * Each filter allows everything while empty; codes no longer offered are ignored.
+     * Each filter allows everything while empty. Codes no longer offered are ignored,
+     * but a filter holding only such codes allows nothing rather than everything.
      */
     public function allowsTrade(string $symbol, string $contractType): bool
     {
+        $savedTradeTypes = $this->synthetic_indices ?? [];
+
+        if ($savedTradeTypes !== [] && self::knownTradeTypeCodes($savedTradeTypes) === []) {
+            return false;
+        }
+
         $allowedSymbols = array_merge(
             $this->filter_markets ?? [],
             array_values(array_intersect_key(self::FOREX_SYMBOLS, array_flip($this->forex_pairs ?? []))),
@@ -105,6 +112,15 @@ class CopySetting extends Model
         $allowedTypes = array_merge(...array_values(array_intersect_key(self::TRADE_TYPES, array_flip($this->synthetic_indices ?? []))));
 
         return $allowedTypes === [] || in_array($contractType, $allowedTypes, true);
+    }
+
+    /**
+     * @param  array<int, string>  $codes
+     * @return list<string> The codes still offered in TRADE_TYPES, in their saved order.
+     */
+    public static function knownTradeTypeCodes(array $codes): array
+    {
+        return array_values(array_filter($codes, fn (string $code) => array_key_exists($code, self::TRADE_TYPES)));
     }
 
     /** Check if the given outcome history matches the follower pattern. */

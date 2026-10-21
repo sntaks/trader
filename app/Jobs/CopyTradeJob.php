@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\CopySetting;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
+use App\Services\MasterContractParser;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Foundation\Queue\Queueable;
@@ -27,6 +28,12 @@ class CopyTradeJob implements ShouldQueue
 
     public function handle(): void
     {
+        if (($this->masterTrade['shape_version'] ?? null) !== MasterContractParser::SHAPE_VERSION) {
+            Log::warning("CopyTradeJob: skipped a master trade without the current shape for connection #{$this->masterConnectionId}.");
+
+            return;
+        }
+
         $masterConnection = DerivConnection::find($this->masterConnectionId);
 
         if (! $masterConnection) {

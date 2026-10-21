@@ -5,6 +5,7 @@ use App\Jobs\PlaceFollowerTradeJob;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Models\User;
+use App\Services\MasterContractParser;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Redis;
 
@@ -15,6 +16,7 @@ $masterTrade = [
     'duration' => 5,
     'duration_unit' => 't',
     'buy_price' => 2.50,
+    'shape_version' => MasterContractParser::SHAPE_VERSION,
 ];
 
 function makeMaster(): DerivConnection
@@ -177,4 +179,15 @@ test('a selected forex pair lets its deriv symbol through', function () use ($ma
     CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'symbol' => 'frxEURUSD']);
 
     Bus::assertDispatched(PlaceFollowerTradeJob::class);
+});
+
+test('does not fan out a payload queued by the old listener', function () {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+
+    $master = makeMaster();
+    makeFollower($master);
+
+    CopyTradeJob::dispatchSync($master->id, legacyListenerTrade());
+
+    Bus::assertNotDispatched(PlaceFollowerTradeJob::class);
 });

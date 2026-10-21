@@ -6,6 +6,7 @@ use App\Jobs\SettleCopyTradeJob;
 use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\DerivApiService;
+use App\Services\MasterContractParser;
 use Illuminate\Support\Facades\Bus;
 
 $masterTrade = [
@@ -18,6 +19,7 @@ $masterTrade = [
     'barrier' => null,
     'barrier2' => null,
     'buy_price' => 1.0,
+    'shape_version' => MasterContractParser::SHAPE_VERSION,
 ];
 
 function makeFollowerConnection(): DerivConnection
@@ -140,9 +142,10 @@ test('skips a trade with the legacy payload shape', function () {
     $followerConn = makeFollowerConnection();
 
     $mock = $this->mock(DerivApiService::class);
+    $mock->shouldReceive('accountCurrency')->andReturn('USD');
     $mock->shouldNotReceive('buyContract');
 
-    $legacyTrade = ['transaction_id' => 111111, 'contract_type' => 'CALL', 'underlying' => 'R_50', 'duration' => 5];
+    $legacyTrade = legacyListenerTrade();
 
     makeJob($followerConn, $masterConn->id, $legacyTrade)->handle(app(DerivApiService::class));
 

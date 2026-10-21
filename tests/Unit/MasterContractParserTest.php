@@ -4,6 +4,7 @@ use App\Exceptions\UncopyableTradeException;
 use App\Services\MasterContractParser;
 
 $buy = ['action' => 'buy', 'contract_id' => 123, 'transaction_id' => 456, 'amount' => -2.5];
+$riseFall = ['shortcode' => 'CALL_R_50_19.54_1700000000_5T_S0P_0'];
 
 test('parses a tick digit contract', function () use ($buy) {
     $trade = MasterContractParser::parse($buy, [
@@ -23,6 +24,7 @@ test('parses a tick digit contract', function () use ($buy) {
         'barrier' => '3',
         'barrier2' => null,
         'buy_price' => 2.5,
+        'shape_version' => MasterContractParser::SHAPE_VERSION,
     ]);
 });
 
@@ -44,8 +46,9 @@ test('falls back to the transaction symbol', function () use ($buy) {
     expect($trade['symbol'])->toBe('R_75');
 });
 
-test('derives minutes from expiry window', function () use ($buy) {
+test('derives minutes from expiry window', function () use ($buy, $riseFall) {
     $trade = MasterContractParser::parse($buy, [
+        ...$riseFall,
         'contract_type' => 'CALL',
         'underlying' => 'R_50',
         'date_start' => 1700000000,
@@ -56,8 +59,9 @@ test('derives minutes from expiry window', function () use ($buy) {
         ->and($trade['duration_unit'])->toBe('m');
 });
 
-test('derives the largest whole unit from expiry window', function (int $seconds, int $duration, string $unit) use ($buy) {
+test('derives the largest whole unit from expiry window', function (int $seconds, int $duration, string $unit) use ($buy, $riseFall) {
     $trade = MasterContractParser::parse($buy, [
+        ...$riseFall,
         'contract_type' => 'PUT',
         'underlying' => 'R_50',
         'date_start' => 1700000000,
@@ -71,8 +75,9 @@ test('derives the largest whole unit from expiry window', function (int $seconds
     'days' => [172800, 2, 'd'],
 ]);
 
-test('uses explicit duration fields when present', function () use ($buy) {
+test('uses explicit duration fields when present', function () use ($buy, $riseFall) {
     $trade = MasterContractParser::parse($buy, [
+        ...$riseFall,
         'contract_type' => 'CALL',
         'underlying' => 'R_50',
         'duration' => 3,
@@ -104,6 +109,61 @@ test('rejects higher lower', function () use ($buy) {
         'tick_count' => 5,
         'barrier' => '1234.56',
         'shortcode' => 'CALL_R_50_19.54_1700000000_5T_S10P_0',
+    ]);
+})->throws(UncopyableTradeException::class);
+
+test('accepts rise fall without shortcode when the barrier is the entry spot', function () use ($buy) {
+    $trade = MasterContractParser::parse($buy, [
+        'contract_type' => 'PUT',
+        'underlying' => 'R_50',
+        'tick_count' => 5,
+        'barrier' => '1234.56',
+        'entry_spot' => '1234.56',
+    ]);
+
+    expect($trade['barrier'])->toBeNull();
+});
+
+test('rejects call put without shortcode unless the barrier proves rise fall', function (array $fields) use ($buy) {
+    MasterContractParser::parse($buy, ['contract_type' => 'CALL', 'underlying' => 'R_50', 'tick_count' => 5, ...$fields]);
+})->throws(UncopyableTradeException::class)->with([
+    'no barrier info' => [[]],
+    'barrier without entry spot' => [['barrier' => '1234.56']],
+    'barrier offset from entry spot' => [['barrier' => '1235.06', 'entry_spot' => '1234.56']],
+]);
+
+test('derives a relative barrier from an absolute touch barrier', function () use ($buy) {
+    $trade = MasterContractParser::parse($buy, [
+        'contract_type' => 'ONETOUCH',
+        'underlying' => 'R_50',
+        'tick_count' => 5,
+        'barrier' => '1234.56',
+        'entry_spot' => '1234.06',
+    ]);
+
+    expect($trade['barrier'])->toBe('+0.50');
+});
+
+test('derives relative range barriers from absolute ones', function () use ($buy) {
+    $trade = MasterContractParser::parse($buy, [
+        'contract_type' => 'RANGE',
+        'underlying' => 'R_50',
+        'tick_count' => 5,
+        'high_barrier' => '101.250',
+        'low_barrier' => '99.5',
+        'entry_tick' => '100.000',
+    ]);
+
+    expect($trade['barrier'])->toBe('+1.250')
+        ->and($trade['barrier2'])->toBe('-0.500');
+});
+
+test('rejects an absolute touch barrier without an entry spot', function () use ($buy) {
+    MasterContractParser::parse($buy, [
+        'contract_type' => 'NOTOUCH',
+        'underlying' => 'R_50',
+        'tick_count' => 5,
+        'barrier' => '1234.56',
     ]);
 })->throws(UncopyableTradeException::class);
 
