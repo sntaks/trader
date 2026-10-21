@@ -366,7 +366,9 @@ class Dashboard extends Component
 
         $this->validate(['followerAccountId' => ['required', 'in:'.implode(',', $validAccountIds)]]);
 
-        if ($this->ownAccountMode) {
+        $isOwnAccountSetting = $setting->master_connection_id === auth()->user()->derivConnection?->id;
+
+        if ($isOwnAccountSetting) {
             $this->validate(
                 ['masterAccountId' => ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
                 ['masterAccountId.different' => 'The master account must differ from the account you copy into.'],
@@ -374,7 +376,7 @@ class Dashboard extends Component
         }
 
         $setting->update([
-            'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
+            'master_account_id' => $isOwnAccountSetting ? $this->masterAccountId : null,
             'stake' => $this->stake,
             'follow_master_stake' => $this->followMasterStake,
             'safe_mode' => $this->safeMode,

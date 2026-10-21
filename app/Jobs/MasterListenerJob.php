@@ -10,6 +10,7 @@ use App\Services\DerivRateLimiter;
 use App\Services\MasterStreamProcessor;
 use App\Services\WebSocketFrameCodec;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -83,9 +84,7 @@ class MasterListenerJob implements ShouldQueue
             return;
         }
 
-        $masterAccountId = $this->resolveMasterAccountId($connection);
-
-        Log::info("MasterListenerJob starting for connection #{$this->connectionId}, account {$masterAccountId}");
+        Log::info("MasterListenerJob starting for connection #{$this->connectionId}");
 
         $stopping = false;
         $failures = 0;
@@ -95,21 +94,31 @@ class MasterListenerJob implements ShouldQueue
             // Self-healing loop: reconnects automatically if the WebSocket drops or
             // Deriv closes the session. Exits only when there are no active followers.
             while (! $stopping) {
-                if (! $this->hasActiveFollowers()) {
+                $connection = $connection->fresh() ?? $connection;
+
+                if (! $this->hasActiveFollowers($connection)) {
                     Log::info("MasterListenerJob: no active followers for connection #{$this->connectionId} — exiting.");
 
                     return;
                 }
 
-                $connection = $connection->fresh() ?? $connection;
                 $this->updateHeartbeat();
 
                 $sessionStartedAt = time();
 
                 try {
-                    $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $masterAccountId, DerivRateLimiter::PRIORITY_TRADE);
-                    Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}");
-                    $this->runSession($wsUrl, $stopping);
+                    $chosenAccountId = $this->chosenAccountId($connection);
+                    $accountId = $chosenAccountId ?? $this->fallbackAccountId($connection);
+
+                    if ($accountId === null) {
+                        Log::error("MasterListenerJob: no account to listen to for connection #{$this->connectionId} — exiting.");
+
+                        return;
+                    }
+
+                    $wsUrl = app(DerivApiService::class)->getOtpUrl($connection, $accountId, DerivRateLimiter::PRIORITY_TRADE);
+                    Log::info("MasterListenerJob: opening session for connection #{$this->connectionId}, account {$accountId}");
+                    $this->runSession($wsUrl, $connection, $chosenAccountId, $stopping);
                     $failures = 0;
                 } catch (DerivAuthException $e) {
                     $this->stopForReauth($connection, $e);
@@ -148,8 +157,7 @@ class MasterListenerJob implements ShouldQueue
     {
         $connection->update(['expires_at' => now()]);
 
-        $stopped = CopySetting::query()
-            ->where('master_connection_id', $this->connectionId)
+        $stopped = $this->followerSettings($connection)
             ->where('is_running', true)
             ->update(['is_running' => false, 'stop_reason' => CopySetting::STOP_REASON_REAUTH]);
 
@@ -207,13 +215,13 @@ class MasterListenerJob implements ShouldQueue
 
     // ─── WebSocket session ─────────────────────────────────────────────────────
 
-    private function runSession(string $wsUrl, bool &$stopping): void
+    private function runSession(string $wsUrl, DerivConnection $connection, ?string $chosenAccountId, bool &$stopping): void
     {
         $socket = $this->openSocket($wsUrl);
 
         try {
             $this->setReadTimeout($socket);
-            $this->listen($socket, $stopping);
+            $this->listen($socket, $connection, $chosenAccountId, $stopping);
         } finally {
             if (is_resource($socket)) {
                 fclose($socket);
@@ -227,7 +235,7 @@ class MasterListenerJob implements ShouldQueue
      *
      * @param  resource  $socket
      */
-    private function listen($socket, bool &$stopping): void
+    private function listen($socket, DerivConnection $connection, ?string $chosenAccountId, bool &$stopping): void
     {
         // OTP session is pre-authenticated; no authorize message required
         $this->sendJson($socket, ['transaction' => 1, 'subscribe' => 1, 'req_id' => MasterStreamProcessor::TRANSACTION_REQ_ID]);
@@ -249,9 +257,7 @@ class MasterListenerJob implements ShouldQueue
                 $this->updateHeartbeat();
                 $lastHeartbeat = time();
 
-                if ($stopping || ! $this->hasActiveFollowers()) {
-                    Log::info('MasterListenerJob: shutting down cleanly.');
-
+                if ($this->shouldEndSession($connection, $chosenAccountId, $stopping)) {
                     return;
                 }
 
@@ -271,6 +277,10 @@ class MasterListenerJob implements ShouldQueue
             if (time() - $lastHeartbeat >= 30) {
                 $this->updateHeartbeat();
                 $lastHeartbeat = time();
+
+                if ($this->shouldEndSession($connection, $chosenAccountId, $stopping)) {
+                    return;
+                }
             }
         }
     }
@@ -379,12 +389,29 @@ class MasterListenerJob implements ShouldQueue
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    private function hasActiveFollowers(): bool
+    private function hasActiveFollowers(DerivConnection $connection): bool
     {
-        return CopySetting::query()
-            ->where('master_connection_id', $this->connectionId)
-            ->where('is_running', true)
-            ->exists();
+        return $this->followerSettings($connection)->where('is_running', true)->exists();
+    }
+
+    /** End the session cleanly when stopping, when no one is copying, or when the chosen account changed. */
+    private function shouldEndSession(DerivConnection $connection, ?string $chosenAccountId, bool $stopping): bool
+    {
+        $connection = $connection->fresh() ?? $connection;
+
+        if ($stopping || ! $this->hasActiveFollowers($connection)) {
+            Log::info('MasterListenerJob: shutting down cleanly.');
+
+            return true;
+        }
+
+        if ($this->chosenAccountId($connection) !== $chosenAccountId) {
+            Log::info("MasterListenerJob: chosen account changed for connection #{$this->connectionId} — reconnecting.");
+
+            return true;
+        }
+
+        return false;
     }
 
     /** Cache key other processes use to confirm this listener is alive. */
@@ -399,24 +426,45 @@ class MasterListenerJob implements ShouldQueue
         Cache::put(self::runningKey($this->connectionId), true, 60);
     }
 
-    private function resolveMasterAccountId(DerivConnection $connection): string
+    /**
+     * The settings this listener copies for. A master serves everyone who follows it; any other
+     * connection only ever runs its owner's own-account session, so no one else's setting counts.
+     *
+     * @return Builder<CopySetting>
+     */
+    private function followerSettings(DerivConnection $connection): Builder
     {
-        $stored = CopySetting::query()
-            ->where('master_connection_id', $this->connectionId)
-            ->whereNotNull('master_account_id')
-            ->value('master_account_id');
+        $query = CopySetting::query()->where('master_connection_id', $connection->id);
 
-        if ($stored) {
-            return $stored;
+        if (! $connection->isMaster()) {
+            $query->where('user_id', $connection->user_id);
         }
 
-        $accounts = app(DerivApiService::class)->getAccounts($connection);
-        $first = $accounts[0]['account_id'] ?? null;
+        return $query;
+    }
 
-        if (! $first) {
-            throw new \RuntimeException('No Deriv accounts found for this connection.');
+    /**
+     * The account chosen in the database: the admin's choice for a master, the owner's own-account
+     * setting otherwise. Never calls Deriv, so it is cheap enough to re-check during a session.
+     */
+    private function chosenAccountId(DerivConnection $connection): ?string
+    {
+        if ($connection->isMaster()) {
+            return $connection->master_account_id;
         }
 
-        return $first;
+        return $this->followerSettings($connection)->value('master_account_id');
+    }
+
+    /** A master with no admin choice listens to its first active account. */
+    private function fallbackAccountId(DerivConnection $connection): ?string
+    {
+        if (! $connection->isMaster()) {
+            return null;
+        }
+
+        $accounts = DerivApiService::activeAccounts(app(DerivApiService::class)->getAccounts($connection, DerivRateLimiter::PRIORITY_TRADE));
+
+        return $accounts[0]['account_id'] ?? null;
     }
 }

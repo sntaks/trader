@@ -129,11 +129,11 @@ function otpOpensOneSession(): ArrayObject
     return $calls;
 }
 
-/** A running follower on a fresh master connection with a known master account. */
+/** A running follower on a fresh master connection whose admin-chosen account is DOT500. */
 function runningMaster(): DerivConnection
 {
-    $master = DerivConnection::factory()->master()->create();
-    CopySetting::factory()->create(['master_connection_id' => $master->id, 'master_account_id' => 'DOT500', 'is_running' => true]);
+    $master = DerivConnection::factory()->master()->create(['master_account_id' => 'DOT500']);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
 
     return $master;
 }
@@ -312,8 +312,8 @@ test('the worker\'s handlers are restored when the job ends', function () {
 
 test('a dead token stops the listener and its followers', function () {
     Sleep::fake();
-    $master = DerivConnection::factory()->master()->create(['expires_at' => null]);
-    $followers = CopySetting::factory()->count(2)->create(['master_connection_id' => $master->id, 'master_account_id' => 'DOT500', 'is_running' => true]);
+    $master = DerivConnection::factory()->master()->create(['expires_at' => null, 'master_account_id' => 'DOT500']);
+    $followers = CopySetting::factory()->count(2)->create(['master_connection_id' => $master->id, 'is_running' => true]);
     $otherMaster = DerivConnection::factory()->master()->create();
     $bystander = CopySetting::factory()->create(['master_connection_id' => $otherMaster->id, 'is_running' => true]);
     $otpCalls = new ArrayObject;
@@ -376,4 +376,113 @@ test('backoff is capped at five minutes', function () {
         ->and(MasterListenerJob::backoffSeconds(4))->toBe(40)
         ->and(MasterListenerJob::backoffSeconds(10))->toBe(300)
         ->and(MasterListenerJob::backoffSeconds(64))->toBe(300);
+});
+
+/**
+ * OTP mock that records the account of each call, then switches followers off and ends the loop.
+ *
+ * @return ArrayObject<int, string>
+ */
+function otpAccounts(): ArrayObject
+{
+    $accounts = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function (DerivConnection $connection, string $accountId) use ($accounts) {
+            $accounts[] = $accountId;
+            CopySetting::query()->update(['is_running' => false]);
+
+            throw new DerivApiException('stop after one session attempt');
+        });
+
+    return $accounts;
+}
+
+test('a master listens to the admin-chosen account', function () {
+    Sleep::fake();
+    $master = DerivConnection::factory()->master()->create(['master_account_id' => 'CR900']);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
+    $accounts = otpAccounts();
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($accounts->getArrayCopy())->toBe(['CR900']);
+});
+
+test('a follower\'s master_account_id never redirects a master listener', function () {
+    Sleep::fake();
+    $master = DerivConnection::factory()->master()->create(['master_account_id' => 'CR900']);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'master_account_id' => 'VRTC111', 'is_running' => true]);
+    $accounts = otpAccounts();
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($accounts->getArrayCopy())->toBe(['CR900']);
+});
+
+test('a master without a chosen account uses its first active account at trade priority', function () {
+    Sleep::fake();
+    $master = DerivConnection::factory()->master()->create(['master_account_id' => null]);
+    CopySetting::factory()->create(['master_connection_id' => $master->id, 'is_running' => true]);
+    $accounts = new ArrayObject;
+    $priorities = new ArrayObject;
+
+    mock(DerivApiService::class)
+        ->shouldReceive('getAccounts')
+        ->andReturnUsing(function (DerivConnection $connection, string $priority = DerivRateLimiter::PRIORITY_READ) use ($priorities) {
+            $priorities[] = $priority;
+
+            return [
+                ['account_id' => 'CR111', 'status' => 'inactive'],
+                ['account_id' => 'CR777', 'status' => 'active'],
+            ];
+        })
+        ->getMock()
+        ->shouldReceive('getOtpUrl')
+        ->andReturnUsing(function (DerivConnection $connection, string $accountId) use ($accounts) {
+            $accounts[] = $accountId;
+            CopySetting::query()->update(['is_running' => false]);
+
+            throw new DerivApiException('stop after one session attempt');
+        });
+
+    (new MasterListenerJob($master->id))->handle();
+
+    expect($accounts->getArrayCopy())->toBe(['CR777'])
+        ->and($priorities->getArrayCopy())->toBe([DerivRateLimiter::PRIORITY_TRADE]);
+});
+
+test('an own-account listener uses its owner\'s setting', function () {
+    Sleep::fake();
+    $own = DerivConnection::factory()->create();
+    CopySetting::factory()->create(['user_id' => $own->user_id, 'master_connection_id' => $own->id, 'master_account_id' => 'VRTC222', 'is_running' => true]);
+    $accounts = otpAccounts();
+
+    (new MasterListenerJob($own->id))->handle();
+
+    expect($accounts->getArrayCopy())->toBe(['VRTC222']);
+});
+
+test('another user\'s setting cannot keep an own-account listener alive', function () {
+    Sleep::fake();
+    $own = DerivConnection::factory()->create();
+    CopySetting::factory()->create(['master_connection_id' => $own->id, 'master_account_id' => 'VRTC333', 'is_running' => true]);
+    $accounts = otpAccounts();
+
+    (new MasterListenerJob($own->id))->handle();
+
+    expect($accounts->getArrayCopy())->toBe([]);
+});
+
+test('an admin account change ends the session', function () {
+    Sleep::fake();
+    $master = runningMaster();
+    $calls = otpOpensOneSession();
+    [$job] = listenerOverPair($master->id);
+    onSessionHeartbeats($master->id, fn () => $master->update(['master_account_id' => 'CR901']));
+
+    $job->handle();
+
+    expect(array_map(fn (array $call) => $call[1], $calls->getArrayCopy()))->toBe(['DOT500', 'CR901']);
 });
