@@ -87,7 +87,13 @@ class CopyTradeJob implements ShouldQueue
                 continue;
             }
 
-            $stake = $this->calculateStake($setting, $sessionTrades);
+            $stake = $this->fitStopLossBudget($setting, $sessionTrades, $this->calculateStake($setting, $sessionTrades));
+
+            if ($stake === null) {
+                Log::info("CopyTradeJob: stop-loss budget spent by open trades for user {$setting->user_id}; skipped.");
+
+                continue;
+            }
 
             $usesPattern = $setting->pattern_enabled && ! empty($setting->follower_pattern);
 
@@ -165,7 +171,41 @@ class CopyTradeJob implements ShouldQueue
         return $query->orderBy('traded_at')->get();
     }
 
+    /** Stake still unsettled this session: pending claims and placed buys that have not settled. */
+    private function openStake(CopySetting $setting): float
+    {
+        $query = CopyTrade::query()
+            ->where('user_id', $setting->user_id)
+            ->whereNull('is_win')
+            ->whereIn('status', [CopyTrade::STATUS_PENDING, CopyTrade::STATUS_PLACED]);
+
+        if ($setting->session_started_at) {
+            $query->where('traded_at', '>=', $setting->session_started_at);
+        }
+
+        return (float) $query->sum('stake');
+    }
+
     // ─── Session limits (take_profit / stop_loss / max_martingale stop) ────────
+
+    /**
+     * Cap the stake so settled losses plus every open stake can never exceed the stop loss.
+     * Null means the budget is below the Deriv minimum and this trade must be skipped.
+     */
+    private function fitStopLossBudget(CopySetting $setting, Collection $sessionTrades, float $stake): ?float
+    {
+        if ($setting->stop_loss === null) {
+            return $stake;
+        }
+
+        $budget = round((float) $setting->stop_loss + (float) $sessionTrades->sum('profit') - $this->openStake($setting), 2);
+
+        if ($budget < 0.35) {
+            return null;
+        }
+
+        return min($stake, $budget);
+    }
 
     private function isSessionLimitReached(CopySetting $setting, Collection $sessionTrades): bool
     {
