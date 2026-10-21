@@ -1,9 +1,12 @@
 <?php
 
 use App\Exceptions\DerivApiException;
+use App\Exceptions\DerivRateLimitedException;
 use App\Services\DerivApiService;
+use App\Services\DerivRateLimiter;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -70,8 +73,11 @@ test('a success without statistics is an error and is not cached', function (mix
     $service = app(DerivApiService::class);
 
     expect(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))
-        ->toThrow(DerivApiException::class, DerivApiService::MARKUP_EMPTY)
-        ->and($service->getMarkupStatistics(now()->subDays(29), now())['total_app_markup_usd'])->toBe(12.5);
+        ->toThrow(DerivApiException::class, DerivApiService::MARKUP_EMPTY);
+
+    $this->travel(61)->seconds();
+
+    expect($service->getMarkupStatistics(now()->subDays(29), now())['total_app_markup_usd'])->toBe(12.5);
 })->with([
     'no data' => [['meta' => []]],
     'html' => ['<html>maintenance</html>'],
@@ -99,4 +105,30 @@ test('markup statistics are cached for ten minutes per range', function () {
     $service->getMarkupStatistics(Carbon::parse('2026-10-01', 'UTC'), Carbon::parse('2026-10-21', 'UTC'));
 
     Http::assertSentCount(2);
+});
+
+test('a markup failure is remembered for a minute', function () {
+    config(['deriv.partner_token' => 'pat_partner']);
+    Http::fake(['*' => Http::response(['errors' => [['status' => 401, 'code' => 'Unauthorized', 'message' => 'x']]], 401)]);
+    $service = app(DerivApiService::class);
+
+    expect(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))->toThrow(DerivApiException::class, DerivApiService::MARKUP_TOKEN_REJECTED)
+        ->and(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))->toThrow(DerivApiException::class, DerivApiService::MARKUP_TOKEN_REJECTED);
+    Http::assertSentCount(1);
+
+    $this->travel(61)->seconds();
+
+    expect(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))->toThrow(DerivApiException::class);
+    Http::assertSentCount(2);
+});
+
+test('a markup 429 is a rate-limit error that pauses no trades and is remembered for a minute', function () {
+    config(['deriv.partner_token' => 'pat_partner']);
+    Http::fake(['*' => Http::response(['errors' => [['status' => 429, 'code' => 'RateLimit', 'message' => 'Too many requests']]], 429, ['Retry-After' => '40'])]);
+    $service = app(DerivApiService::class);
+
+    expect(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))->toThrow(DerivRateLimitedException::class)
+        ->and(Cache::get(DerivRateLimiter::COOLDOWN_KEY))->toBeNull()
+        ->and(fn () => $service->getMarkupStatistics(now()->subDays(29), now()))->toThrow(DerivRateLimitedException::class);
+    Http::assertSentCount(1);
 });

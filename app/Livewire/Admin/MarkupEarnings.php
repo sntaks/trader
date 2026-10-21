@@ -56,9 +56,13 @@ class MarkupEarnings extends Component
     /** Which of the platform's apps an app id is, or null for any other app. */
     public function appLabel(string $appId): ?string
     {
-        return match ($appId) {
-            (string) config('deriv.app_id') => 'OAuth app',
-            (string) config('deriv.app_id_pat') => 'PAT app',
+        $isOauthApp = $appId === (string) config('deriv.app_id');
+        $isPatApp = $appId === (string) config('deriv.app_id_pat');
+
+        return match (true) {
+            $isOauthApp && $isPatApp => 'OAuth + PAT app',
+            $isOauthApp => 'OAuth app',
+            $isPatApp => 'PAT app',
             default => null,
         };
     }
