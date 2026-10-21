@@ -668,6 +668,15 @@ class Dashboard extends Component
         unset($this->stoppedReason);
     }
 
+    /** Close any stop popup and open the settings panel on the master list. */
+    public function chooseNewMaster(): void
+    {
+        $this->dismissStopPopup();
+
+        $this->settingsOpen = true;
+        $this->showMasterList = true;
+    }
+
     /** Download every trade of the current session, in the table's order, as CSV. */
     public function exportTransactions(): StreamedResponse
     {

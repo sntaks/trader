@@ -253,3 +253,22 @@ test('the timer shows hours past a day instead of wrapping', function () {
         ->assertDontSeeHtml('toISOString().substr(11, 8)')
         ->assertSeeHtml('Math.floor(runSeconds / 3600)');
 });
+
+test('pressing run sets the run start', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->andReturn(['balance' => ['balance' => 250]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT200', 'is_running' => false]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)
+        ->assertSet('runStartedAt', null)
+        ->call('startBot')
+        ->assertHasNoErrors()
+        ->assertSet('runStartedAt', $setting->fresh()->session_started_at->timestamp);
+});

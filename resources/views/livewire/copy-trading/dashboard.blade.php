@@ -109,7 +109,7 @@ $setting = $this->setting;
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
-                        The master you were copying disconnected their Deriv account. Choose another master to continue.
+                        The master you were copying disconnected their Deriv account. Pick a new source in Change Master — copying between your own Deriv accounts is available now.
                     </div>
                 @elseif($sr['reason'] === \App\Models\CopySetting::STOP_REASON_DISCONNECTED)
                     <div class="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
@@ -126,9 +126,15 @@ $setting = $this->setting;
                 <flux:button wire:click="dismissStopPopup" variant="primary" class="flex-1">
                     Dismiss
                 </flux:button>
-                <flux:button wire:click="startBot" variant="ghost" class="flex-1">
-                    Start New Session
-                </flux:button>
+                @if($sr['reason'] === \App\Models\CopySetting::STOP_REASON_MASTER_DISCONNECTED)
+                    <flux:button wire:click="chooseNewMaster" wire:loading.attr="disabled" wire:target="chooseNewMaster" variant="ghost" class="flex-1">
+                        Change master
+                    </flux:button>
+                @else
+                    <flux:button wire:click="startBot" variant="ghost" class="flex-1">
+                        Start New Session
+                    </flux:button>
+                @endif
             </div>
         </div>
     </div>
@@ -478,6 +484,18 @@ $setting = $this->setting;
     {{-- ================================================================ --}}
     {{-- VIEW B: Following a master → full trading dashboard              --}}
     {{-- ================================================================ --}}
+
+        @if(! $setting->master_connection_id && empty($this->stoppedReason))
+            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 px-5 py-4">
+                <div>
+                    <p class="text-sm font-semibold text-amber-400">No master to copy</p>
+                    <p class="mt-1 text-sm text-amber-400/80">The master you were copying stopped sharing, or none is chosen. Pick a new source in Change Master — copying between your own Deriv accounts is available now.</p>
+                </div>
+                <flux:button wire:click="chooseNewMaster" wire:loading.attr="disabled" wire:target="chooseNewMaster" size="sm">
+                    Change master
+                </flux:button>
+            </div>
+        @endif
 
         {{-- ===== TOP CONTROL BAR ===== --}}
         <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#1F2937] bg-[#0B1220] px-5 py-4">
