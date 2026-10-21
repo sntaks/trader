@@ -20,12 +20,6 @@ test('accountCurrency returns the matching account currency', function () {
     expect(app(DerivApiService::class)->accountCurrency($connection, 'DOT200'))->toBe('EUR');
 });
 
-test('accountCurrency uses the first account when none is selected', function () {
-    $connection = DerivConnection::factory()->create();
-
-    expect(app(DerivApiService::class)->accountCurrency($connection, null))->toBe('USD');
-});
-
 test('accountCurrency throws for an unknown account', function () {
     $connection = DerivConnection::factory()->create();
 

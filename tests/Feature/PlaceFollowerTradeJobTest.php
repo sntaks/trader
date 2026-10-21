@@ -41,7 +41,7 @@ function makeJob(DerivConnection $conn, int $masterConnectionId, array $trade, f
         masterTrade: $trade,
         stake: $stake,
         userId: $conn->user_id,
-        followerAccountId: null,
+        followerAccountId: array_key_exists('followerAccountId', $overrides) ? $overrides['followerAccountId'] : 'DOT100',
         markPatternConsumed: $overrides['markPatternConsumed'] ?? false,
         markWaitTrigger: $overrides['markWaitTrigger'] ?? false,
     );
@@ -374,4 +374,19 @@ test('keeps long failure reasons within the column', function () use ($masterTra
     makeJob($followerConn, $masterConn->id, $masterTrade)->handle(app(DerivApiService::class));
 
     expect(mb_strlen(CopyTrade::where('user_id', $followerConn->user_id)->sole()->failure_reason))->toBeLessThanOrEqual(255);
+});
+
+test('places no trade without a follower account', function () use ($masterTrade) {
+    $masterConn = DerivConnection::factory()->master()->create();
+    $followerConn = makeFollowerConnection();
+
+    $mock = $this->mock(DerivApiService::class);
+    $mock->shouldNotReceive('buyContract');
+    $mock->shouldNotReceive('accountCurrency');
+
+    makeJob($followerConn, $masterConn->id, $masterTrade, overrides: ['followerAccountId' => null])->handle(app(DerivApiService::class));
+
+    expect(CopyTrade::sole())
+        ->status->toBe(CopyTrade::STATUS_FAILED)
+        ->failure_reason->toBe('No follower account selected.');
 });

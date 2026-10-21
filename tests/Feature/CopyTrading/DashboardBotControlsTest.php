@@ -62,3 +62,37 @@ test('bot controls clear only the acting users pattern lock', function (string $
     expect(Cache::has(CopyTradeJob::patternConsumedKey($master->id, $actor->user_id)))->toBeFalse()
         ->and(Cache::has(CopyTradeJob::patternConsumedKey($master->id, $other->user_id)))->toBeTrue();
 })->with(['startBot', 'performReset', 'performFullReset']);
+
+test('startBot records the start balance of the follower account', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)
+        ->shouldReceive('getBalance')
+        ->with(Mockery::type(DerivConnection::class), 'DOT200')
+        ->andReturn(['balance' => ['balance' => 250]])
+        ->getMock()
+        ->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => 'DOT200', 'is_running' => false, 'start_balance' => null]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->call('startBot')->assertHasNoErrors();
+
+    expect($setting->fresh())
+        ->start_balance->toEqual(250)
+        ->is_running->toBeTrue();
+});
+
+test('startBot asks for a follower account when none is set', function () {
+    Bus::fake([MasterListenerJob::class]);
+    mock(DerivApiService::class)->shouldNotReceive('getBalance')->getMock()->shouldIgnoreMissing();
+
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'follower_account_id' => null, 'is_running' => false, 'start_balance' => null]);
+
+    Livewire::actingAs($user)->test(Dashboard::class)->call('startBot')->assertHasErrors('bot');
+
+    expect($setting->fresh()->is_running)->toBeFalse();
+    Bus::assertNotDispatched(MasterListenerJob::class);
+});

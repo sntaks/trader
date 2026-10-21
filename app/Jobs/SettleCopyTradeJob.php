@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\CopySetting;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
@@ -38,7 +39,7 @@ class SettleCopyTradeJob implements ShouldQueue
         }
 
         try {
-            $contract = $deriv->getContractDetails($connection, $this->contractId);
+            $contract = $deriv->getContractDetails($connection, (string) CopySetting::query()->where('user_id', $copyTrade->user_id)->value('follower_account_id'), $this->contractId);
         } catch (\Throwable $e) {
             Log::warning("SettleCopyTradeJob: could not fetch contract #{$this->contractId}: {$e->getMessage()}");
             $this->release(5);

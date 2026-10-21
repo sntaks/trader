@@ -32,6 +32,7 @@ test('trade history shows profit table transactions', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->once()
         ->andReturn([
@@ -57,6 +58,7 @@ test('trade history computes correct analytics', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->andReturn([
             'profit_table' => [
@@ -84,6 +86,7 @@ test('switching to statement tab shows transactions', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')->andReturn(['profit_table' => ['transactions' => [], 'count' => 0]]);
     $mock->shouldReceive('getStatement')
         ->once()
@@ -110,6 +113,7 @@ test('trade history gracefully handles api failure', function () {
     DerivConnection::factory()->create(['user_id' => $user->id]);
 
     $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([['account_id' => 'DOT100']]);
     $mock->shouldReceive('getProfitTable')
         ->andThrow(new DerivApiException('API unavailable'));
 

@@ -50,7 +50,7 @@ class Overview extends Component
     }
 
     /**
-     * All accounts (demo + real, options + CFD) merged from REST and WebSocket APIs.
+     * All options accounts (demo + real) from the REST API.
      */
     #[Computed]
     public function accounts(): array
@@ -71,13 +71,7 @@ class Overview extends Component
             $options = [];
         }
 
-        try {
-            $cfds = app(DerivApiService::class)->getCfdAccounts($connection);
-        } catch (DerivApiException) {
-            $cfds = [];
-        }
-
-        return array_merge($options, $cfds);
+        return $options;
     }
 
     /**
@@ -93,8 +87,14 @@ class Overview extends Component
             return [];
         }
 
+        $accountId = $this->accounts[0]['account_id'] ?? null;
+
+        if (! $accountId) {
+            return [];
+        }
+
         try {
-            return app(DerivApiService::class)->getBalance($connection)['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $accountId)['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }

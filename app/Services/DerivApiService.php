@@ -62,29 +62,6 @@ class DerivApiService
     }
 
     /**
-     * Get all CFD (MT5) accounts for this token.
-     * Returns normalized account data matching the Options account shape.
-     */
-    public function getCfdAccounts(DerivConnection $connection): array
-    {
-        return $this->cachedCall($connection, 'cfd_accounts', 3600, function () use ($connection) {
-            $response = $this->wsCall($connection, [
-                'trading_platform_accounts' => 1,
-                'platform' => 'mt5',
-            ]);
-
-            return array_map(fn (array $a) => [
-                'account_id' => $a['login'] ?? '—',
-                'currency' => strtoupper($a['currency'] ?? 'USD'),
-                'is_demo' => ($a['account_type'] ?? '') === 'demo',
-                'balance' => isset($a['balance']) ? (float) $a['balance'] : null,
-                'landing_company_name' => 'MT5 '.ucfirst($a['market_type'] ?? 'CFD'),
-                'product_type' => 'cfd',
-            ], $response['trading_platform_accounts'] ?? []);
-        });
-    }
-
-    /**
      * Reset a demo account balance back to $10,000.
      * Only works for demo accounts.
      */
@@ -116,10 +93,10 @@ class DerivApiService
 
     // ─── WebSocket API ────────────────────────────────────────────────────────
 
-    /** Get the current account balance. Cached 30 s. */
-    public function getBalance(DerivConnection $connection): array
+    /** Get the account's current balance. Cached 30 s. */
+    public function getBalance(DerivConnection $connection, string $accountId): array
     {
-        return $this->cachedCall($connection, 'balance', 30, fn () => $this->wsCall($connection, ['balance' => 1]));
+        return $this->cachedCall($connection, "{$accountId}:balance", 30, fn () => $this->wsCall($connection, $accountId, ['balance' => 1]));
     }
 
     /**
@@ -128,9 +105,9 @@ class DerivApiService
      * @param  int  $limit  Max 500 per page.
      * @param  int  $offset  Pagination offset.
      */
-    public function getProfitTable(DerivConnection $connection, int $limit = 25, int $offset = 0): array
+    public function getProfitTable(DerivConnection $connection, string $accountId, int $limit = 25, int $offset = 0): array
     {
-        return $this->cachedCall($connection, "profit_table:{$limit}:{$offset}", 300, fn () => $this->wsCall($connection, [
+        return $this->cachedCall($connection, "{$accountId}:profit_table:{$limit}:{$offset}", 300, fn () => $this->wsCall($connection, $accountId, [
             'profit_table' => 1,
             'limit' => $limit,
             'offset' => $offset,
@@ -141,9 +118,9 @@ class DerivApiService
     /**
      * Get account statement (deposits, withdrawals, trades). Cached 5 min.
      */
-    public function getStatement(DerivConnection $connection, int $limit = 25, int $offset = 0): array
+    public function getStatement(DerivConnection $connection, string $accountId, int $limit = 25, int $offset = 0): array
     {
-        return $this->cachedCall($connection, "statement:{$limit}:{$offset}", 300, fn () => $this->wsCall($connection, [
+        return $this->cachedCall($connection, "{$accountId}:statement:{$limit}:{$offset}", 300, fn () => $this->wsCall($connection, $accountId, [
             'statement' => 1,
             'limit' => $limit,
             'offset' => $offset,
@@ -151,15 +128,15 @@ class DerivApiService
     }
 
     /** Get open/active positions (portfolio). Cached 30 s. */
-    public function getPortfolio(DerivConnection $connection): array
+    public function getPortfolio(DerivConnection $connection, string $accountId): array
     {
-        return $this->cachedCall($connection, 'portfolio', 30, fn () => $this->wsCall($connection, ['portfolio' => 1]));
+        return $this->cachedCall($connection, "{$accountId}:portfolio", 30, fn () => $this->wsCall($connection, $accountId, ['portfolio' => 1]));
     }
 
     /** Fetch current details for a single contract (used to settle copy trades). */
-    public function getContractDetails(DerivConnection $connection, string $contractId): array
+    public function getContractDetails(DerivConnection $connection, string $accountId, string $contractId): array
     {
-        $response = $this->wsCall($connection, [
+        $response = $this->wsCall($connection, $accountId, [
             'proposal_open_contract' => 1,
             'contract_id' => (int) $contractId,
             'req_id' => 1,
@@ -169,21 +146,16 @@ class DerivApiService
     }
 
     /**
-     * Currency of the given account, or of the first account when none is selected
-     * (the same account wsSession() falls back to).
+     * Currency of the given account.
      *
      * @throws DerivApiException
      */
-    public function accountCurrency(DerivConnection $connection, ?string $accountId): string
+    public function accountCurrency(DerivConnection $connection, string $accountId): string
     {
-        $accounts = $this->getAccounts($connection);
-
-        $account = $accountId === null
-            ? ($accounts[0] ?? null)
-            : collect($accounts)->firstWhere('account_id', $accountId);
+        $account = collect($this->getAccounts($connection))->firstWhere('account_id', $accountId);
 
         if (empty($account['currency'])) {
-            throw new DerivApiException('Account '.($accountId ?? '(default)').' not found for this connection.');
+            throw new DerivApiException("Account {$accountId} not found for this connection.");
         }
 
         return strtoupper($account['currency']);
@@ -221,11 +193,19 @@ class DerivApiService
      * Buy a contract on behalf of a follower.
      * Fetches a price proposal then immediately buys it.
      *
-     * @param  array{contract_type: string, symbol: string, duration: int, duration_unit: string, stake: float, currency: string, basis?: string, barrier?: string|null, barrier2?: string|null, follower_account_id?: string|null}  $params
+     * @param  array{contract_type: string, symbol: string, duration: int, duration_unit: string, stake: float, currency: string, basis?: string, barrier?: string|null, barrier2?: string|null, follower_account_id: string|null}  $params
+     *
+     * @throws DerivApiException
      */
     public function buyContract(DerivConnection $connection, array $params): array
     {
-        return $this->wsSession($connection, $this->resolveAccountId($connection, $params['follower_account_id'] ?? null), function (Client $client) use ($params): array {
+        $accountId = $params['follower_account_id'] ?? null;
+
+        if (! $accountId) {
+            throw new DerivApiException('No follower account selected.');
+        }
+
+        return $this->wsSession($connection, $accountId, function (Client $client) use ($params): array {
             $proposal = [...self::proposalRequest($params), 'req_id' => 1];
 
             Log::debug('buyContract proposal', $proposal);
@@ -320,25 +300,9 @@ class DerivApiService
         return "deriv:conn:{$connection->id}:version";
     }
 
-    /** The account to open a session on: the given one, or the first listed account when none is given. */
-    private function resolveAccountId(DerivConnection $connection, ?string $accountId): string
+    private function wsCall(DerivConnection $connection, string $accountId, array $request): array
     {
-        if ($accountId) {
-            return $accountId;
-        }
-
-        $accountId = $this->getAccounts($connection)[0]['account_id'] ?? null;
-
-        if (! $accountId) {
-            throw new DerivApiException('No Deriv account found — cannot open WebSocket session');
-        }
-
-        return $accountId;
-    }
-
-    private function wsCall(DerivConnection $connection, array $request, ?string $accountId = null): array
-    {
-        return $this->wsSession($connection, $this->resolveAccountId($connection, $accountId), function (Client $client) use ($request): array {
+        return $this->wsSession($connection, $accountId, function (Client $client) use ($request): array {
             $this->wsSend($client, $request);
             $response = $this->wsReceive($client);
 

@@ -3,6 +3,7 @@
 namespace App\Livewire\Account;
 
 use App\Exceptions\DerivApiException;
+use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
@@ -48,7 +49,7 @@ class TradeHistory extends Component
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getProfitTable($connection, $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId($connection), $this->perPage, $offset);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -67,7 +68,7 @@ class TradeHistory extends Component
 
         try {
             $offset = ($this->page - 1) * $this->perPage;
-            $result = app(DerivApiService::class)->getStatement($connection, $this->perPage, $offset);
+            $result = app(DerivApiService::class)->getStatement($connection, $this->accountId($connection), $this->perPage, $offset);
 
             return $result['statement'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -111,6 +112,18 @@ class TradeHistory extends Component
             'worst_trade' => ! empty($profits) ? min($profits) : 0,
             'avg_stake' => ! empty($stakes) ? array_sum($stakes) / count($stakes) : 0,
         ];
+    }
+
+    /**
+     * The copy setting's follower account, else the first listed account. Replaced by the account picker.
+     *
+     * @throws DerivApiException
+     */
+    private function accountId(DerivConnection $connection): string
+    {
+        return auth()->user()->copySetting?->follower_account_id
+            ?? app(DerivApiService::class)->getAccounts($connection)[0]['account_id']
+            ?? throw new DerivApiException('No Deriv account found.');
     }
 
     public function render(): View

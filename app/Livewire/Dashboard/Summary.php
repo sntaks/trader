@@ -3,6 +3,7 @@
 namespace App\Livewire\Dashboard;
 
 use App\Exceptions\DerivApiException;
+use App\Models\DerivConnection;
 use App\Services\DerivApiService;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
@@ -20,7 +21,7 @@ class Summary extends Component
         }
 
         try {
-            return app(DerivApiService::class)->getBalance($connection)['balance'] ?? [];
+            return app(DerivApiService::class)->getBalance($connection, $this->accountId($connection))['balance'] ?? [];
         } catch (DerivApiException) {
             return [];
         }
@@ -36,7 +37,7 @@ class Summary extends Component
         }
 
         try {
-            $result = app(DerivApiService::class)->getProfitTable($connection, 20, 0);
+            $result = app(DerivApiService::class)->getProfitTable($connection, $this->accountId($connection), 20, 0);
 
             return $result['profit_table'] ?? ['transactions' => [], 'count' => 0];
         } catch (DerivApiException) {
@@ -74,6 +75,18 @@ class Summary extends Component
             'pnl' => $pnl,
             'pnl_positive' => $pnl >= 0,
         ];
+    }
+
+    /**
+     * The copy setting's follower account, else the first listed account. Replaced by the account picker.
+     *
+     * @throws DerivApiException
+     */
+    private function accountId(DerivConnection $connection): string
+    {
+        return auth()->user()->copySetting?->follower_account_id
+            ?? app(DerivApiService::class)->getAccounts($connection)[0]['account_id']
+            ?? throw new DerivApiException('No Deriv account found.');
     }
 
     public function render(): View

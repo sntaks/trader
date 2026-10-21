@@ -22,6 +22,7 @@ class CopySettingFactory extends Factory
             'follower_pattern' => fake()->randomElement(['111', '101', '110', '11']),
             'pattern_enabled' => true,
             'stake' => fake()->randomFloat(2, 0.35, 10),
+            'follower_account_id' => 'DOT100',
             'is_active' => true,
         ];
     }

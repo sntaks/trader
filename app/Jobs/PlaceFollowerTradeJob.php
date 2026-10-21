@@ -72,6 +72,12 @@ class PlaceFollowerTradeJob implements ShouldQueue
             return;
         }
 
+        if (! $this->followerAccountId) {
+            $this->recordFailure($copyTrade, 'No follower account selected.');
+
+            return;
+        }
+
         $missing = array_filter(
             self::REQUIRED_TRADE_KEYS,
             fn (string $key) => ! isset($this->masterTrade[$key]) || $this->masterTrade[$key] === '',

@@ -124,6 +124,9 @@ class Dashboard extends Component
     /** Shown instead of saving a setting without a follower account when Deriv accounts cannot be loaded. */
     private const ACCOUNTS_UNAVAILABLE = "We couldn't load your Deriv accounts. Reconnect or try again.";
 
+    /** Shown when the bot is started before a follower account is chosen; every copy is bought on that account. */
+    private const FOLLOWER_ACCOUNT_REQUIRED = 'Choose the account to copy trades into before starting.';
+
     public function mount(): void
     {
         $setting = auth()->user()->copySetting;
@@ -403,11 +406,17 @@ class Dashboard extends Component
             return;
         }
 
+        if (! $setting->follower_account_id) {
+            $this->addError('bot', self::FOLLOWER_ACCOUNT_REQUIRED);
+
+            return;
+        }
+
         $derivConnection = auth()->user()->derivConnection;
 
         if ($setting->start_balance === null && $derivConnection) {
             try {
-                $balance = app(DerivApiService::class)->getBalance($derivConnection);
+                $balance = app(DerivApiService::class)->getBalance($derivConnection, $setting->follower_account_id);
             } catch (DerivApiException $e) {
                 $this->addError('bot', $e->getMessage());
 
@@ -506,9 +515,10 @@ class Dashboard extends Component
             if ($isRunning) {
                 try {
                     $connection = auth()->user()->derivConnection;
+                    $followerAccountId = auth()->user()->copySetting?->follower_account_id;
 
-                    if ($connection) {
-                        $result = app(DerivApiService::class)->getBalance($connection);
+                    if ($connection && $followerAccountId) {
+                        $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId);
                         $updates['start_balance'] = (float) ($result['balance']['balance'] ?? 0);
                     }
                 } catch (\Throwable) {
@@ -802,13 +812,14 @@ class Dashboard extends Component
     public function currentBalance(): ?float
     {
         $connection = auth()->user()->derivConnection;
+        $followerAccountId = $this->setting?->follower_account_id;
 
-        if (! $connection) {
+        if (! $connection || ! $followerAccountId) {
             return null;
         }
 
         try {
-            $result = app(DerivApiService::class)->getBalance($connection);
+            $result = app(DerivApiService::class)->getBalance($connection, $followerAccountId);
 
             return (float) ($result['balance']['balance'] ?? 0);
         } catch (\Throwable) {
