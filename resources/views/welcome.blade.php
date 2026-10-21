@@ -602,7 +602,7 @@
                 ],
                 [
                     'q' => 'How much does it cost?',
-                    'a' => "Free to get started. We earn revenue via the official Deriv API markup system (app_markup_percentage), a small percentage applied to trades routed through our platform. This is a standard Deriv mechanism and does not add any visible fee on your end. There are no hidden charges or mandatory subscriptions.",
+                    'a' => "Free to get started. We earn a commission through Deriv's official markup system: a small percentage is built into the price of each contract placed through our platform, so the payout on a winning trade is slightly lower than trading on Deriv directly. There are no subscriptions or other charges.",
                 ],
                 [
                     'q' => 'Can I set limits to protect my capital?',
