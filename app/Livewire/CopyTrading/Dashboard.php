@@ -121,6 +121,9 @@ class Dashboard extends Component
     /** Shown when a public master tries to follow anyone, which would allow copy loops. */
     private const MASTER_CANNOT_FOLLOW = 'Master traders cannot follow other traders or use own-account mode.';
 
+    /** Shown instead of saving a setting without a follower account when Deriv accounts cannot be loaded. */
+    private const ACCOUNTS_UNAVAILABLE = "We couldn't load your Deriv accounts. Reconnect or try again.";
+
     public function mount(): void
     {
         $setting = auth()->user()->copySetting;
@@ -284,9 +287,13 @@ class Dashboard extends Component
 
         $validAccountIds = array_column($this->myAccounts, 'account_id');
 
-        if (! empty($validAccountIds)) {
-            $rules['followerAccountId'] = ['required', 'in:'.implode(',', $validAccountIds)];
+        if (empty($validAccountIds)) {
+            $this->addError('followerAccountId', self::ACCOUNTS_UNAVAILABLE);
+
+            return;
         }
+
+        $rules['followerAccountId'] = ['required', 'in:'.implode(',', $validAccountIds)];
 
         if ($this->ownAccountMode) {
             $rules['masterAccountId'] = ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId'];
@@ -304,7 +311,7 @@ class Dashboard extends Component
                 'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
                 'follower_pattern' => $this->followerPattern,
                 'pattern_enabled' => $this->patternEnabled,
-                'follower_account_id' => $this->followerAccountId ?: null,
+                'follower_account_id' => $this->followerAccountId,
                 'is_active' => true,
             ]
         );
@@ -353,11 +360,15 @@ class Dashboard extends Component
 
         $validAccountIds = array_column($this->myAccounts, 'account_id');
 
-        if (! empty($validAccountIds) && $this->followerAccountId) {
-            $this->validate(['followerAccountId' => ['nullable', 'in:'.implode(',', $validAccountIds)]]);
+        if (empty($validAccountIds)) {
+            $this->addError('followerAccountId', self::ACCOUNTS_UNAVAILABLE);
+
+            return;
         }
 
-        if ($this->ownAccountMode && ! empty($validAccountIds) && $this->masterAccountId) {
+        $this->validate(['followerAccountId' => ['required', 'in:'.implode(',', $validAccountIds)]]);
+
+        if ($this->ownAccountMode && $this->masterAccountId) {
             $this->validate(
                 ['masterAccountId' => ['nullable', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
                 ['masterAccountId.different' => 'The master account must differ from the account you copy into.'],
@@ -383,7 +394,7 @@ class Dashboard extends Component
             'filter_markets' => $this->filterMarkets,
             'synthetic_indices' => $this->syntheticIndices,
             'forex_pairs' => $this->forexPairs,
-            'follower_account_id' => $this->followerAccountId ?: null,
+            'follower_account_id' => $this->followerAccountId,
         ]);
 
         $this->settingsOpen = false;

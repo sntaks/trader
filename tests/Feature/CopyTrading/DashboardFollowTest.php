@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\DerivApiException;
 use App\Livewire\CopyTrading\Dashboard;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
@@ -205,4 +206,73 @@ test('saveSettings still works for a master who already follows another master',
         ->assertHasNoErrors();
 
     expect((float) $setting->fresh()->stake)->toBe(2.0);
+});
+
+function accountsUnavailable(): void
+{
+    mock(DerivApiService::class)
+        ->shouldReceive('getAccounts')
+        ->andThrow(new DerivApiException('Deriv API unreachable'))
+        ->getMock()
+        ->shouldIgnoreMissing();
+}
+
+test('follow refuses to save when accounts cannot be loaded', function () {
+    accountsUnavailable();
+    $user = followTestUser();
+    $master = DerivConnection::factory()->master()->create();
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->call('selectMaster', $master->id)
+        ->call('follow')
+        ->assertHasErrors('followerAccountId');
+
+    expect(CopySetting::count())->toBe(0);
+});
+
+test('saveSettings refuses to save when accounts cannot be loaded', function () {
+    accountsUnavailable();
+    $user = followTestUser();
+    $master = DerivConnection::factory()->master()->create();
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'master_connection_id' => $master->id, 'follower_account_id' => 'DOT100', 'stake' => 1]);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->set('settingsOpen', true)
+        ->set('stake', 3.0)
+        ->call('saveSettings')
+        ->assertHasErrors('followerAccountId')
+        ->assertSee('Reconnect or try again');
+
+    expect($setting->fresh())
+        ->follower_account_id->toBe('DOT100')
+        ->and((float) $setting->fresh()->stake)->toBe(1.0);
+});
+
+test('follow requires a follower account', function () {
+    $user = followTestUser();
+    $master = DerivConnection::factory()->master()->create();
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->call('selectMaster', $master->id)
+        ->call('follow')
+        ->assertHasErrors(['followerAccountId' => 'required']);
+
+    expect(CopySetting::count())->toBe(0);
+});
+
+test('saveSettings requires a follower account', function () {
+    $user = followTestUser();
+    $master = DerivConnection::factory()->master()->create();
+    $setting = CopySetting::factory()->create(['user_id' => $user->id, 'master_connection_id' => $master->id, 'follower_account_id' => 'DOT100']);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->set('followerAccountId', null)
+        ->call('saveSettings')
+        ->assertHasErrors(['followerAccountId' => 'required']);
+
+    expect($setting->fresh()->follower_account_id)->toBe('DOT100');
 });

@@ -840,6 +840,9 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
             </div>
 
+            @error('followerAccountId') <p class="px-6 pt-3 text-xs text-red-500">{{ $message }}</p> @enderror
+            @error('masterAccountId') <p class="px-6 pt-3 text-xs text-red-500">{{ $message }}</p> @enderror
+
             <div class="flex gap-3 border-t border-[#1F2937] px-6 py-4">
                 <flux:button wire:click="saveSettings" wire:loading.attr="disabled" wire:target="saveSettings" variant="primary">
                     <span wire:loading.remove wire:target="saveSettings">Save Settings</span>
