@@ -1,5 +1,7 @@
 <?php
 
+use App\Models\User;
+use Illuminate\Support\Facades\Mail;
 use Laravel\Fortify\Features;
 
 beforeEach(function () {
@@ -43,4 +45,21 @@ test('names with markup are still rejected', function () {
         'password' => 'password',
         'password_confirmation' => 'password',
     ])->assertSessionHasErrors('name');
+});
+
+test('a filled honeypot redirects home without creating or logging in a user', function () {
+    Mail::fake();
+
+    $this->post(route('register.store'), [
+        'name' => 'Spam Bot',
+        'email' => 'bot@example.com',
+        'password' => 'password',
+        'password_confirmation' => 'password',
+        'website' => 'spam.example',
+    ])->assertRedirect(route('home'));
+
+    $this->assertGuest();
+    expect(User::count())->toBe(0);
+    Mail::assertNothingQueued();
+    Mail::assertNothingSent();
 });
