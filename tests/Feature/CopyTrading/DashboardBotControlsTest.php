@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\DerivApiService;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 
 use function Pest\Laravel\mock;
@@ -174,4 +175,81 @@ test('stopping one follower keeps the shared heartbeat', function () {
     Livewire::actingAs($user)->test(Dashboard::class)->call('stopBot');
 
     expect(Cache::has(MasterListenerJob::heartbeatKey($master->id)))->toBeTrue();
+});
+
+/** A follower setting with its own connection, running unless the attributes say otherwise. */
+function runningDashboardSetting(array $attributes = []): CopySetting
+{
+    mock(DerivApiService::class)->shouldIgnoreMissing();
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    return CopySetting::factory()->create([
+        'user_id' => $user->id,
+        'is_running' => true,
+        'session_started_at' => now()->subMinute(),
+        ...$attributes,
+    ]);
+}
+
+test('the run start is exposed to the timer while the bot runs', function () {
+    $setting = runningDashboardSetting(['session_started_at' => now()->subMinutes(5)]);
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)
+        ->assertSet('runStartedAt', $setting->fresh()->session_started_at->timestamp);
+});
+
+test('a stopped bot exposes no run start', function () {
+    $setting = runningDashboardSetting(['is_running' => false, 'session_started_at' => now()->subMinutes(5)]);
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)->assertSet('runStartedAt', null);
+});
+
+test('stopping the bot clears the run start', function () {
+    $setting = runningDashboardSetting(['session_started_at' => now()->subMinutes(5)]);
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)
+        ->call('stopBot')
+        ->assertSet('runStartedAt', null);
+});
+
+test('the timer reads a public property, not the computed setting', function () {
+    $setting = runningDashboardSetting();
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)
+        ->assertSeeHtml('$wire.runStartedAt')
+        ->assertDontSeeHtml('$wire.setting');
+});
+
+test('the run start cannot be set from the browser', function () {
+    $setting = runningDashboardSetting();
+
+    expect(fn () => Livewire::actingAs($setting->user)->test(Dashboard::class)->set('runStartedAt', 1))
+        ->toThrow(CannotUpdateLockedPropertyException::class);
+});
+
+/** The root element's x-data, which must not change between renders or Alpine rebuilds the timer's state. */
+function dashboardRootXData(string $html): ?string
+{
+    return preg_match('/wire:poll\.15s\s+x-data="([^"]*)"/', $html, $matches) ? $matches[1] : null;
+}
+
+test('the timer state survives a re-render', function () {
+    $setting = runningDashboardSetting();
+    $component = Livewire::actingAs($setting->user)->test(Dashboard::class);
+    $before = dashboardRootXData($component->html());
+
+    $this->travel(5)->seconds();
+    $component->call('$refresh');
+
+    expect($before)->not->toBeNull()
+        ->and(dashboardRootXData($component->html()))->toBe($before);
+});
+
+test('the timer shows hours past a day instead of wrapping', function () {
+    $setting = runningDashboardSetting();
+
+    Livewire::actingAs($setting->user)->test(Dashboard::class)
+        ->assertDontSeeHtml('toISOString().substr(11, 8)')
+        ->assertSeeHtml('Math.floor(runSeconds / 3600)');
 });

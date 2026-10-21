@@ -276,39 +276,50 @@ protected function isAccessible(User $user, ?string $path = null): bool
 # Copy Trader — Laravel Project
 
 ## Stack
-- Laravel 11 + Livewire v3 + Flux UI
-- MySQL database
-- Redis for queues
-- Laravel Reverb for WebSockets
-- Deriv WebSocket API (wss://ws.binaryws.com/websockets/v3)
+- Laravel 12, Livewire 4, Flux UI (free), Fortify + Socialite (Google sign-in), Pest 4
+- MySQL; Redis for queues and cache
+- Deriv's new API: REST on `api.derivws.com` and per-account WebSockets opened with an OTP URL
+- Laravel Reverb is installed but unused: nothing broadcasts (see Live updates)
 
 ## Business Model
-- Platform earns via Deriv API markup (app_markup_percentage on every trade)
-- Platform earns via Deriv affiliate revenue share (affiliate token on OAuth signup)
-- Optional user subscriptions via Laravel Cashier + Stripe
+- Markup: set per app (OAuth app and PAT app) in the Deriv developer dashboard, not in code; the admin dashboard reads earnings per app from Deriv's markup statistics endpoint with `DERIV_PARTNER_TOKEN`
+- Affiliate: Deriv sign-in and sign-up links carry `affiliate_token` and UTM tags when `DERIV_AFFILIATE_TOKEN` is set
+- No subscriptions
 
 ## How It Works
-- Masters connect their Deriv account via API token
-- Followers link to a master and choose copy settings
-- When master trades, CopyTradeJob fans out to all active followers instantly
-- Every copied trade includes app_markup_percentage for commission revenue
-- Users who sign up via Deriv OAuth are tagged with affiliate token
+- A user connects Deriv by OAuth (PKCE) or a Personal Access Token; tokens live encrypted on `DerivConnection`
+- A follower's `CopySetting` points at a master connection (another user's master, or their own account)
+- `MasterListenerJob` (queue `listener`) streams the master's transactions; `MasterStreamProcessor` handles each message
+- `CopyTradeJob` (queue `high`) fans a master trade out to followers; `PlaceFollowerTradeJob` (queue `high`) buys through `DerivApiService::buyContract`
+- `SettleCopyTradeJob` and `copy-trades:settle` (every minute) record results
+- Scheduled: `deriv:ensure-listeners` (every minute), `deriv:refresh-tokens` (every five minutes)
 
 ## Key Files
-- DerivService: app/Services/DerivService.php
-- RiskManager: app/Services/RiskManager.php
-- Core job: app/Jobs/CopyTradeJob.php
-- Master listener: app/Console/Commands/ListenMasterAccount.php
+- `config/deriv.php`: app IDs, scopes, partner and affiliate tokens, rate limits, listener workers
+- Services (`app/Services`):
+  - `DerivApiService`: REST and WebSocket calls, caching, markup statistics
+  - `DerivRateLimiter`: Deriv's REST limits shared between trades and reads
+  - `DerivTokenRefresher`: renews OAuth tokens
+  - `DerivPatConnector`: validates and stores a PAT
+  - `MasterContractParser`: turns a master's contract into a follower's buy
+  - `MasterStreamProcessor`: master stream messages
+  - `WebSocketFrameCodec`: RFC 6455 frames
+  - `BrevoEmailService`: ad-hoc mail
+- Jobs: `MasterListenerJob`, `CopyTradeJob`, `PlaceFollowerTradeJob`, `SettleCopyTradeJob`
+- Commands: `EnsureListenersRunning`, `RefreshDerivTokens`, `SettleOpenCopyTrades`
+- Copy-trading UI: `App\Livewire\CopyTrading\Dashboard` and `MasterOutcomesTicker`
+
+## Live Updates
+- The UI polls with `wire:poll` (copy-trading dashboard every 15s, master outcomes ticker every 3s); there is no broadcasting
+- To add push updates later: restore an Echo client imported from `resources/js/app.js`, broadcast from the jobs, and run `reverb:start` in `composer dev` and under supervisor
 
 ## Conventions
-- All Blade components use: rounded-xl border bg-white dark:bg-zinc-900
-- All forms use Livewire wire:model and wire:click
-- Events broadcast on private channel user.{id}
-- API tokens always stored encrypted using Laravel's encrypted cast
-- Use wire:loading states on all async buttons
-- Use @class() directive for conditional Tailwind classes
+- API tokens are stored with Laravel's encrypted cast
+- Use `wire:loading` states on all async buttons and `@class()` for conditional classes
+- The dashboard uses the dark tokens `rounded-xl border border-[#1F2937] bg-[#0B1220]`
+- Admin Livewire components abort 403 in `boot()`
+- All times are stored in the app timezone (Africa/Nairobi); Deriv date ranges are sent in UTC
 
 ## Environment
-- Windows 11 + Laravel Herd
-- PHP 8.3, MySQL, Redis
-- Node via Herd
+- Windows 11 + Laravel Herd; PHP 8.4 via `/c/Users/EMILY/.config/herd/bin/php.bat`
+- MySQL, Redis; Node via Herd

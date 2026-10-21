@@ -4,6 +4,7 @@ use App\Livewire\CopyTrading\MasterOutcomesTicker;
 use App\Models\CopySetting;
 use App\Models\DerivConnection;
 use App\Models\User;
+use Livewire\Exceptions\ComponentNotFoundException;
 use Livewire\Features\SupportLockedProperties\CannotUpdateLockedPropertyException;
 use Livewire\Livewire;
 
@@ -51,4 +52,16 @@ test('ticker connection id cannot be changed by the client', function () {
         ->test(MasterOutcomesTicker::class, ['connectionId' => $setting->master_connection_id])
         ->set('connectionId', $otherMaster->id))
         ->toThrow(CannotUpdateLockedPropertyException::class);
+});
+
+test('the ticker name resolves to the class component', function () {
+    expect(app('livewire.factory')->create('copy-trading.master-outcomes-ticker'))->toBeInstanceOf(MasterOutcomesTicker::class);
+});
+
+test('the empty reconnect-banner scaffold is gone', function () {
+    expect(fn () => app('livewire.factory')->create('deriv-reconnect-banner'))->toThrow(ComponentNotFoundException::class);
+});
+
+test('the unmounted setup component is gone', function () {
+    expect(class_exists('App\Livewire\CopyTrading\Setup'))->toBeFalse();
 });

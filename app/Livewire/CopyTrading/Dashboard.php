@@ -9,6 +9,7 @@ use App\Models\CopySetting;
 use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Services\DerivApiService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
@@ -19,6 +20,7 @@ use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
 use Livewire\Component;
 use Livewire\WithPagination;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class Dashboard extends Component
 {
@@ -93,6 +95,10 @@ class Dashboard extends Component
     // -- Runtime state --
     public bool $paused = false;
 
+    /** When the running session started, in Unix seconds, for the run timer; null while stopped. Set on every render. */
+    #[Locked]
+    public ?int $runStartedAt = null;
+
     // -- Transactions table --
     public int $perPage = 25;
 
@@ -132,6 +138,9 @@ class Dashboard extends Component
 
     /** Shown when the bot is started without a master, e.g. after the master disconnected. */
     public const MASTER_REQUIRED = 'Choose a master to copy before starting.';
+
+    /** Columns of the trade export, in order. */
+    public const EXPORT_HEADERS = ['Traded at', 'Symbol', 'Contract type', 'Duration', 'Stake', 'Payout', 'Profit', 'Result', 'Follower contract', 'Master contract', 'Failure reason'];
 
     public function mount(): void
     {
@@ -659,9 +668,66 @@ class Dashboard extends Component
         unset($this->stoppedReason);
     }
 
-    public function exportTransactions(): void
+    /** Download every trade of the current session, in the table's order, as CSV. */
+    public function exportTransactions(): StreamedResponse
     {
-        $this->dispatch('export-transactions');
+        $trades = $this->sessionTradesQuery();
+
+        return response()->streamDownload(function () use ($trades): void {
+            $output = fopen('php://output', 'w');
+            fputcsv($output, self::EXPORT_HEADERS);
+
+            foreach ($trades->lazy() as $trade) {
+                fputcsv($output, $this->exportRow($trade));
+            }
+
+            fclose($output);
+        }, 'copy-trades-'.now()->format('Y-m-d').'.csv', ['Content-Type' => 'text/csv']);
+    }
+
+    /**
+     * One export line. Text cells that a spreadsheet would read as a formula get a leading apostrophe;
+     * money cells are plain numbers, and empty when the trade has not settled.
+     *
+     * @return list<string>
+     */
+    private function exportRow(CopyTrade $trade): array
+    {
+        $money = fn (mixed $amount): string => $amount === null ? '' : number_format((float) $amount, 2, '.', '');
+        $text = fn (mixed $value): string => preg_match('/^[=+\-@\t\r]/', (string) $value) ? "'".$value : (string) $value;
+
+        $result = match (true) {
+            $trade->status === CopyTrade::STATUS_FAILED => 'Failed',
+            $trade->status === CopyTrade::STATUS_PENDING => 'Pending',
+            $trade->is_win === null => 'Open',
+            default => $trade->is_win ? 'Won' : 'Lost',
+        };
+
+        return [
+            $trade->traded_at?->format('Y-m-d H:i:s') ?? '',
+            $text($trade->symbol),
+            $text($trade->contract_type),
+            $text($trade->duration),
+            $money($trade->stake),
+            $money($trade->payout),
+            $money($trade->profit),
+            $result,
+            $text($trade->follower_contract_id),
+            $text($trade->master_contract_id),
+            $text($trade->failure_reason),
+        ];
+    }
+
+    /** The current session's trades, newest first: the trade table and the export share it. */
+    private function sessionTradesQuery(): Builder
+    {
+        $query = CopyTrade::query()->where('user_id', auth()->id());
+
+        if ($sessionStart = $this->setting?->session_started_at) {
+            $query->where('traded_at', '>=', $sessionStart);
+        }
+
+        return $query->orderByDesc('traded_at')->orderByDesc('id');
     }
 
     // ---- Column & market toggles ----
@@ -867,14 +933,9 @@ class Dashboard extends Component
 
     public function render(): View
     {
-        $query = CopyTrade::query()->where('user_id', auth()->id());
+        $trades = $this->sessionTradesQuery()->paginate($this->perPage);
 
-        $sessionStart = $this->setting?->session_started_at;
-        if ($sessionStart) {
-            $query->where('traded_at', '>=', $sessionStart);
-        }
-
-        $trades = $query->orderBy('traded_at')->paginate($this->perPage);
+        $this->runStartedAt = $this->setting?->is_running ? $this->setting->session_started_at?->timestamp : null;
 
         return view('livewire.copy-trading.dashboard', compact('trades'));
     }

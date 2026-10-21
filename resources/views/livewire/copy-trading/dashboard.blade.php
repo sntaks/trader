@@ -1,17 +1,19 @@
 @php
 $setting = $this->setting;
-$initialSeconds = ($setting?->is_running && $setting?->session_started_at)
-    ? max(0, now()->diffInSeconds($setting->session_started_at))
-    : 0;
 @endphp
-<div class="space-y-6" wire:poll.15s x-data="{ runSeconds: {{ $initialSeconds }}, timer: null }"
+{{-- x-data must render identically every time: a changed x-data makes Alpine rebuild the timer's state on each poll. --}}
+<div class="space-y-6" wire:poll.15s
+    x-data="{ runSeconds: 0, clockOffset: 0, timer: null, destroy() { clearInterval(this.timer) } }"
+    data-server-now="{{ now()->timestamp }}"
     x-init="
-        if ($wire.setting?.is_running) { timer = setInterval(() => runSeconds++, 1000); }
-        $watch('$wire.setting?.is_running', val => {
-            clearInterval(timer);
-            if (val) { runSeconds = 0; timer = setInterval(() => runSeconds++, 1000); }
-            else { runSeconds = 0; }
-        });
+        clockOffset = Number($el.dataset.serverNow) - Math.floor(Date.now() / 1000);
+        const tick = () => {
+            runSeconds = $wire.runStartedAt
+                ? Math.max(0, Math.floor(Date.now() / 1000) + clockOffset - $wire.runStartedAt)
+                : 0;
+        };
+        tick();
+        timer = setInterval(tick, 1000);
     ">
 
     {{-- ================================================================ --}}
@@ -506,7 +508,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 @if($setting->is_running)
                     <span class="text-xs text-zinc-400">
                         Running:
-                        <span x-text="new Date(runSeconds * 1000).toISOString().substr(11, 8)" class="font-mono text-[#CDF12B]">00:00:00</span>
+                        <span x-text="String(Math.floor(runSeconds / 3600)).padStart(2, '0') + ':' + String(Math.floor(runSeconds % 3600 / 60)).padStart(2, '0') + ':' + String(runSeconds % 60).padStart(2, '0')" class="font-mono text-[#CDF12B]">00:00:00</span>
                     </span>
                 @endif
 
@@ -1013,6 +1015,11 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
                 {{-- Column visibility toggle (only shown on transactions tab) --}}
                 @if($activeTab === 'transactions')
+                <flux:button wire:click="exportTransactions" wire:loading.attr="disabled" wire:target="exportTransactions"
+                    size="sm" variant="ghost" icon="arrow-down-tray" class="mr-2">
+                    <span wire:loading.remove wire:target="exportTransactions">Export CSV</span>
+                    <span wire:loading wire:target="exportTransactions">Exporting…</span>
+                </flux:button>
                 <div class="relative mr-2" x-data="{ open: false }" @click.outside="open = false">
                     <button @click="open = !open"
                         class="flex items-center gap-1.5 rounded-lg border border-[#1F2937] bg-[#111827] px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
@@ -1133,7 +1140,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                             </thead>
                             <tbody>
                                 @foreach($trades as $i => $trade)
-                                    @php $rowNum = ($trades->currentPage() - 1) * $trades->perPage() + $i + 1; @endphp
+                                    @php $rowNum = $trades->total() - (($trades->currentPage() - 1) * $trades->perPage() + $i); @endphp
                                     <tr wire:key="{{ $trade->id }}"
                                         @class([
                                             'border-b border-[#1F2937]/50 transition-colors',
