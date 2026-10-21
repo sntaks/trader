@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\Auth\GoogleAuthController;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Laravel\Socialite\Contracts\Factory as SocialiteFactory;
 use Laravel\Socialite\Contracts\Provider;
 use Laravel\Socialite\Two\User as SocialiteUser;
@@ -12,6 +14,7 @@ function fakeSocialiteUser(array $attributes = []): SocialiteUser
     $socialiteUser->allows('getName')->andReturn($attributes['name'] ?? 'Google User');
     $socialiteUser->allows('getEmail')->andReturn($attributes['email'] ?? 'google@example.com');
     $socialiteUser->allows('getAvatar')->andReturn($attributes['avatar'] ?? 'https://example.com/avatar.jpg');
+    $socialiteUser->allows('getRaw')->andReturn(['email_verified' => $attributes['email_verified'] ?? true]);
 
     return $socialiteUser;
 }
@@ -88,3 +91,79 @@ test('google names are stored raw and capped', function (string $googleName, str
     'too long' => [str_repeat('a', 150), str_repeat('a', 100)],
     'blank' => ['   ', 'jane.doe'],
 ]);
+
+test('an unverified google email cannot create an account', function () {
+    mockSocialite(fakeSocialiteUser(['email_verified' => false]));
+
+    $this->get(route('auth.google.callback'))
+        ->assertRedirect(route('login'))
+        ->assertSessionHasErrors(['google' => GoogleAuthController::UNVERIFIED_MESSAGE]);
+
+    expect(User::count())->toBe(0);
+    $this->assertGuest();
+});
+
+test('an unverified google email cannot link to an existing account', function () {
+    $existing = User::factory()->create(['email' => 'google@example.com', 'google_id' => null]);
+    mockSocialite(fakeSocialiteUser(['email_verified' => false]));
+
+    $this->get(route('auth.google.callback'))->assertSessionHasErrors('google');
+
+    expect($existing->fresh()->google_id)->toBeNull();
+    $this->assertGuest();
+});
+
+test('an unverified google email still signs in an already linked account', function () {
+    $existing = User::factory()->create(['email' => 'google@example.com', 'google_id' => '109876543210']);
+    mockSocialite(fakeSocialiteUser(['email_verified' => false]));
+
+    $this->get(route('auth.google.callback'))->assertRedirectToRoute('dashboard');
+
+    $this->assertAuthenticatedAs($existing);
+});
+
+test('linking to an unverified password account wipes its password, two-factor and sessions', function () {
+    $existing = User::factory()->unverified()->create([
+        'email' => 'google@example.com',
+        'google_id' => null,
+        'password' => 'attacker-password',
+        'two_factor_secret' => encrypt('secret'),
+        'two_factor_recovery_codes' => encrypt('[]'),
+        'two_factor_confirmed_at' => now(),
+    ]);
+    $rememberToken = $existing->remember_token;
+    DB::table('sessions')->insert(['id' => 'attacker-session', 'user_id' => $existing->id, 'payload' => '', 'last_activity' => time()]);
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'))->assertRedirectToRoute('dashboard');
+
+    $existing->refresh();
+
+    expect($existing->password)->toBeNull()
+        ->and($existing->two_factor_secret)->toBeNull()
+        ->and($existing->two_factor_recovery_codes)->toBeNull()
+        ->and($existing->two_factor_confirmed_at)->toBeNull()
+        ->and($existing->remember_token)->not->toBe($rememberToken)
+        ->and($existing->email_verified_at)->not->toBeNull()
+        ->and(DB::table('sessions')->where('id', 'attacker-session')->exists())->toBeFalse();
+    $this->assertAuthenticatedAs($existing);
+});
+
+test('linking to a verified account leaves its password and two-factor alone', function () {
+    $existing = User::factory()->create([
+        'email' => 'google@example.com',
+        'google_id' => null,
+        'two_factor_secret' => encrypt('secret'),
+        'two_factor_confirmed_at' => now(),
+    ]);
+    $password = $existing->password;
+    mockSocialite(fakeSocialiteUser());
+
+    $this->get(route('auth.google.callback'));
+
+    $existing->refresh();
+
+    expect($existing->password)->toBe($password)
+        ->and($existing->two_factor_secret)->not->toBeNull()
+        ->and($existing->google_id)->toBe('109876543210');
+});

@@ -14,6 +14,8 @@ use Laravel\Socialite\Facades\Socialite;
 
 class GoogleAuthController extends Controller
 {
+    public const UNVERIFIED_MESSAGE = 'Google has not verified this email address yet. Verify it with Google, or sign in with your password.';
+
     public function redirect(): RedirectResponse
     {
         return Socialite::driver('google')->redirect();
@@ -34,15 +36,20 @@ class GoogleAuthController extends Controller
             return redirect()->intended(route('dashboard'));
         }
 
+        if (($googleUser->getRaw()['email_verified'] ?? false) !== true) {
+            return redirect()->route('login')->withErrors(['google' => self::UNVERIFIED_MESSAGE]);
+        }
+
         $user = User::where('email', $googleEmail)->first();
 
         if ($user) {
-            $user->google_id = $googleUser->getId();
-            $user->avatar = $googleUser->getAvatar();
-
             if (is_null($user->email_verified_at)) {
+                $user->secureAfterTakeover();
                 $user->email_verified_at = now();
             }
+
+            $user->google_id = $googleUser->getId();
+            $user->avatar = $googleUser->getAvatar();
 
             $user->save();
 
