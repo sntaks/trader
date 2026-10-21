@@ -45,6 +45,7 @@ function downloadedCsv(Testable $component): array
 }
 
 test('export downloads every session trade, newest first, as csv', function () {
+    $this->freezeTime();
     $setting = exportSetting();
     exportTrade($setting, ['follower_trx_id' => 'TRX-BEFORE', 'traded_at' => now()->subHours(2)]);
     foreach (range(1, 27) as $position) {
