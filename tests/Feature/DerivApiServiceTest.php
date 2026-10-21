@@ -178,3 +178,12 @@ test('profit table since sends an uncached string date_from', function () {
         ->and($record['urls'][0])->toEndWith('otp=DOT200')
         ->and($record['sent'][0])->toMatchArray(['profit_table' => 1, 'date_from' => '1761050000', 'limit' => 500, 'sort' => 'ASC']);
 });
+
+test('a ws call makes exactly one rest request', function () {
+    [$service] = fakeDerivSocket([['balance' => ['balance' => 1]]]);
+
+    $service->getBalance(DerivConnection::factory()->create(), 'DOT100');
+
+    Http::assertSentCount(1);
+    Http::assertSent(fn (Request $request) => $request->method() === 'POST' && str_ends_with($request->url(), '/accounts/DOT100/otp'));
+});
