@@ -162,3 +162,19 @@ test('buying without a follower account fails before any session opens', functio
 
     Http::assertNotSent(fn (Request $request) => str_ends_with($request->url(), '/otp'));
 });
+
+test('profit table since sends an uncached string date_from', function () {
+    [$service, $record] = fakeDerivSocket([
+        ['profit_table' => ['count' => 1, 'transactions' => [['contract_id' => 9]]]],
+        ['profit_table' => ['count' => 0, 'transactions' => []]],
+    ], sockets: 2);
+    $connection = DerivConnection::factory()->create();
+
+    $first = $service->getProfitTableSince($connection, 'DOT200', 1761050000);
+    $second = $service->getProfitTableSince($connection, 'DOT200', 1761050000);
+
+    expect($first)->toBe([['contract_id' => 9]])
+        ->and($second)->toBe([])
+        ->and($record['urls'][0])->toEndWith('otp=DOT200')
+        ->and($record['sent'][0])->toMatchArray(['profit_table' => 1, 'date_from' => '1761050000', 'limit' => 500, 'sort' => 'ASC']);
+});

@@ -116,6 +116,25 @@ class DerivApiService
     }
 
     /**
+     * Closed contracts sold since $dateFrom, oldest first. Never cached: the settlement sweeper needs fresh results.
+     *
+     * @return list<array<string, mixed>> The `profit_table.transactions` rows.
+     *
+     * @throws DerivApiException
+     */
+    public function getProfitTableSince(DerivConnection $connection, string $accountId, int $dateFrom, int $limit = 500): array
+    {
+        $response = $this->wsCall($connection, $accountId, [
+            'profit_table' => 1,
+            'date_from' => (string) $dateFrom,
+            'limit' => $limit,
+            'sort' => 'ASC',
+        ]);
+
+        return $response['profit_table']['transactions'] ?? [];
+    }
+
+    /**
      * Get account statement (deposits, withdrawals, trades). Cached 5 min.
      */
     public function getStatement(DerivConnection $connection, string $accountId, int $limit = 25, int $offset = 0): array
