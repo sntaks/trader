@@ -12,8 +12,10 @@ use App\Services\DerivApiService;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\On;
 use Livewire\Component;
 use Livewire\WithPagination;
@@ -38,9 +40,11 @@ class Dashboard extends Component
     public bool $stopBotOnReset = false;
 
     /** Whether the user is using their own account as master (own-account trading mode). */
+    #[Locked]
     public bool $ownAccountMode = false;
 
     // -- Master selection --
+    #[Locked]
     public ?int $selectedMasterId = null;
 
     /** The specific Deriv account ID to listen on as master (used in own-account mode). */
@@ -114,6 +118,12 @@ class Dashboard extends Component
     /** @var array<string, string> Forex label => Deriv symbol. */
     public const AVAILABLE_FOREX = CopySetting::FOREX_SYMBOLS;
 
+    /** Shown when a public master tries to follow anyone, which would allow copy loops. */
+    private const MASTER_CANNOT_FOLLOW = 'Master traders cannot follow other traders or use own-account mode.';
+
+    /** Shown instead of saving a setting without a follower account when Deriv accounts cannot be loaded. */
+    private const ACCOUNTS_UNAVAILABLE = "We couldn't load your Deriv accounts. Reconnect or try again.";
+
     public function mount(): void
     {
         $setting = auth()->user()->copySetting;
@@ -160,6 +170,12 @@ class Dashboard extends Component
             return;
         }
 
+        if ($ownConnection->isMaster()) {
+            $this->addError('selectedMasterId', self::MASTER_CANNOT_FOLLOW);
+
+            return;
+        }
+
         $this->ownAccountMode = true;
         $this->selectedMasterId = $ownConnection->id;
         $this->showForm = true;
@@ -177,7 +193,16 @@ class Dashboard extends Component
 
     public function switchMaster(int $connectionId): void
     {
-        $master = DerivConnection::findOrFail($connectionId);
+        if ($this->ownConnectionIsMaster()) {
+            $this->addError('selectedMasterId', self::MASTER_CANNOT_FOLLOW);
+
+            return;
+        }
+
+        $master = DerivConnection::query()
+            ->where('type', 'master')
+            ->where('user_id', '!=', auth()->id())
+            ->findOrFail($connectionId);
 
         auth()->user()->copySetting?->update([
             'master_connection_id' => $master->id,
@@ -197,6 +222,22 @@ class Dashboard extends Component
         if (! $ownConnection) {
             return;
         }
+
+        if ($ownConnection->isMaster()) {
+            $this->addError('selectedMasterId', self::MASTER_CANNOT_FOLLOW);
+
+            return;
+        }
+
+        $this->validate([
+            'masterAccountId' => [
+                'required',
+                Rule::in(array_column($this->myAccounts, 'account_id')),
+                Rule::notIn([auth()->user()->copySetting?->follower_account_id]),
+            ],
+        ], [
+            'masterAccountId.not_in' => 'The master account must differ from the account you copy into.',
+        ]);
 
         auth()->user()->copySetting?->update([
             'master_connection_id' => $ownConnection->id,
@@ -224,23 +265,44 @@ class Dashboard extends Component
 
     public function follow(): void
     {
+        $ownConnection = auth()->user()->derivConnection;
+
+        if ($ownConnection?->isMaster()) {
+            $this->addError('selectedMasterId', self::MASTER_CANNOT_FOLLOW);
+
+            return;
+        }
+
+        if ($this->ownAccountMode) {
+            $this->selectedMasterId = $ownConnection?->id;
+        }
+
         $rules = [
-            'selectedMasterId' => ['required', 'exists:deriv_connections,id'],
+            'selectedMasterId' => $this->ownAccountMode
+                ? ['required']
+                : ['required', Rule::exists('deriv_connections', 'id')->where('type', 'master')->whereNot('user_id', auth()->id())],
             'followerPattern' => ['required', 'regex:/^[01]+$/', 'min_digits:1', 'max:20'],
             'patternEnabled' => ['boolean'],
         ];
 
         $validAccountIds = array_column($this->myAccounts, 'account_id');
 
-        if (! empty($validAccountIds)) {
-            $rules['followerAccountId'] = ['required', 'in:'.implode(',', $validAccountIds)];
+        if (empty($validAccountIds)) {
+            $this->addError('followerAccountId', self::ACCOUNTS_UNAVAILABLE);
+
+            return;
         }
+
+        $rules['followerAccountId'] = ['required', 'in:'.implode(',', $validAccountIds)];
 
         if ($this->ownAccountMode) {
-            $rules['masterAccountId'] = ['required', 'in:'.implode(',', $validAccountIds)];
+            $rules['masterAccountId'] = ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId'];
         }
 
-        $this->validate($rules);
+        $this->validate($rules, [
+            'selectedMasterId.exists' => 'Choose a master trader from the list.',
+            'masterAccountId.different' => 'The master account must differ from the account you copy into.',
+        ]);
 
         CopySetting::updateOrCreate(
             ['user_id' => auth()->id()],
@@ -249,7 +311,7 @@ class Dashboard extends Component
                 'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
                 'follower_pattern' => $this->followerPattern,
                 'pattern_enabled' => $this->patternEnabled,
-                'follower_account_id' => $this->followerAccountId ?: null,
+                'follower_account_id' => $this->followerAccountId,
                 'is_active' => true,
             ]
         );
@@ -280,15 +342,7 @@ class Dashboard extends Component
 
     public function saveSettings(): void
     {
-        $this->validate([
-            'stake' => ['required', 'numeric', 'min:0.35', 'max:50000'],
-            'stakeMultiplier' => ['required', 'numeric', 'min:1', 'max:100'],
-            'takeProfit' => ['nullable', 'numeric', 'min:0'],
-            'stopLoss' => ['nullable', 'numeric', 'min:0'],
-            'followerPattern' => ['required', 'regex:/^[01]+$/', 'max:20'],
-            'maxMartingale' => ['integer', 'min:0', 'max:50'],
-            'doMartingaleAt' => ['integer', 'min:1', 'max:50'],
-        ]);
+        $this->validate($this->settingsRules());
 
         $setting = auth()->user()->copySetting;
 
@@ -298,16 +352,23 @@ class Dashboard extends Component
 
         $validAccountIds = array_column($this->myAccounts, 'account_id');
 
-        if (! empty($validAccountIds) && $this->followerAccountId) {
-            $this->validate(['followerAccountId' => ['nullable', 'in:'.implode(',', $validAccountIds)]]);
+        if (empty($validAccountIds)) {
+            $this->addError('followerAccountId', self::ACCOUNTS_UNAVAILABLE);
+
+            return;
         }
 
-        if ($this->ownAccountMode && ! empty($validAccountIds) && $this->masterAccountId) {
-            $this->validate(['masterAccountId' => ['nullable', 'in:'.implode(',', $validAccountIds)]]);
+        $this->validate(['followerAccountId' => ['required', 'in:'.implode(',', $validAccountIds)]]);
+
+        if ($this->ownAccountMode) {
+            $this->validate(
+                ['masterAccountId' => ['required', 'in:'.implode(',', $validAccountIds), 'different:followerAccountId']],
+                ['masterAccountId.different' => 'The master account must differ from the account you copy into.'],
+            );
         }
 
         $setting->update([
-            'master_account_id' => $this->ownAccountMode ? ($this->masterAccountId ?: null) : null,
+            'master_account_id' => $this->ownAccountMode ? $this->masterAccountId : null,
             'stake' => $this->stake,
             'follow_master_stake' => $this->followMasterStake,
             'safe_mode' => $this->safeMode,
@@ -325,7 +386,7 @@ class Dashboard extends Component
             'filter_markets' => $this->filterMarkets,
             'synthetic_indices' => $this->syntheticIndices,
             'forex_pairs' => $this->forexPairs,
-            'follower_account_id' => $this->followerAccountId ?: null,
+            'follower_account_id' => $this->followerAccountId,
         ]);
 
         $this->settingsOpen = false;
@@ -345,8 +406,14 @@ class Dashboard extends Component
         $derivConnection = auth()->user()->derivConnection;
 
         if ($setting->start_balance === null && $derivConnection) {
-            $derivApi = app(DerivApiService::class);
-            $balance = $derivApi->getBalance($derivConnection);
+            try {
+                $balance = app(DerivApiService::class)->getBalance($derivConnection);
+            } catch (DerivApiException $e) {
+                $this->addError('bot', $e->getMessage());
+
+                return;
+            }
+
             $setting->update(['start_balance' => $balance['balance']['balance'] ?? null]);
         }
 
@@ -415,6 +482,8 @@ class Dashboard extends Component
 
             return;
         }
+
+        $this->validate($this->settingsRules());
 
         $isRunning = (bool) $setting->is_running;
 
@@ -596,6 +665,39 @@ class Dashboard extends Component
         } else {
             $this->forexPairs[] = $pair;
         }
+    }
+
+    /**
+     * Bounds for every setting saved from the settings panel or the reset modal.
+     *
+     * @return array<string, array<int, mixed>>
+     */
+    private function settingsRules(): array
+    {
+        return [
+            'stake' => ['required', 'numeric', 'min:0.35', 'max:'.config('deriv.max_stake')],
+            'stakeMultiplier' => ['required', 'numeric', 'min:1', 'max:100'],
+            'takeProfit' => ['nullable', 'numeric', 'gt:0'],
+            'stopLoss' => ['nullable', 'numeric', 'gt:0'],
+            'followerPattern' => ['required', 'regex:/^[01]+$/', 'max:20'],
+            'maxCompound' => ['integer', 'min:0', 'max:50'],
+            'waitForLoss' => ['integer', 'min:0', 'max:50'],
+            'maxMartingale' => ['integer', 'min:0', 'max:50'],
+            'doMartingaleAt' => ['integer', 'min:1', 'max:50'],
+            'ifHitMaxMartingale' => ['required', 'in:stop,continue'],
+            'filterMarkets' => ['array'],
+            'filterMarkets.*' => [Rule::in(CopySetting::MARKET_SYMBOLS)],
+            'syntheticIndices' => ['array'],
+            'syntheticIndices.*' => [Rule::in(array_keys(CopySetting::TRADE_TYPES))],
+            'forexPairs' => ['array'],
+            'forexPairs.*' => [Rule::in(array_keys(CopySetting::FOREX_SYMBOLS))],
+        ];
+    }
+
+    /** Public masters may not follow anyone: every follow edge then points at a master, so copy loops cannot form. */
+    private function ownConnectionIsMaster(): bool
+    {
+        return (bool) auth()->user()->derivConnection?->isMaster();
     }
 
     #[On('copy-setting-saved')]

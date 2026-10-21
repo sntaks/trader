@@ -103,12 +103,7 @@ class DerivLegacyApiService
         $appId = config('deriv.legacy_app_id');
         $path = "/websockets/v3?app_id={$appId}";
 
-        $context = stream_context_create([
-            'ssl' => [
-                'verify_peer' => false,
-                'verify_peer_name' => false,
-            ],
-        ]);
+        $context = DerivApiService::streamContext();
 
         $socket = @stream_socket_client(
             'ssl://'.self::WS_HOST.':'.self::WS_PORT,

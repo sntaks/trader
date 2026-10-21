@@ -3,6 +3,7 @@
 use App\Jobs\CopyTradeJob;
 use App\Jobs\PlaceFollowerTradeJob;
 use App\Models\CopySetting;
+use App\Models\CopyTrade;
 use App\Models\DerivConnection;
 use App\Models\User;
 use App\Services\MasterContractParser;
@@ -190,4 +191,55 @@ test('does not fan out a payload queued by the old listener', function () {
     CopyTradeJob::dispatchSync($master->id, legacyListenerTrade());
 
     Bus::assertNotDispatched(PlaceFollowerTradeJob::class);
+});
+
+function recordLosses(CopySetting $setting, int $count): void
+{
+    foreach (range(1, $count) as $i) {
+        CopyTrade::create([
+            'user_id' => $setting->user_id,
+            'master_connection_id' => $setting->master_connection_id,
+            'stake' => 1,
+            'profit' => -1,
+            'is_win' => false,
+            'traded_at' => now()->subMinutes(10 - $i),
+        ]);
+    }
+}
+
+test('clamps a martingale stake to the configured ceiling', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+    config(['deriv.max_stake' => 50]);
+
+    $master = makeMaster();
+    $setting = makeFollower($master, ['stake' => 1, 'stake_multiplier' => 10, 'max_martingale' => 5, 'do_martingale_at' => 1]);
+    recordLosses($setting, 3);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 50.0);
+});
+
+test('clamps a followed master stake to the ceiling', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+    config(['deriv.max_stake' => 50]);
+
+    $master = makeMaster();
+    makeFollower($master, ['follow_master_stake' => true]);
+
+    CopyTradeJob::dispatchSync($master->id, [...$masterTrade, 'buy_price' => 5000]);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 50.0);
+});
+
+test('never clamps below the deriv minimum stake', function () use ($masterTrade) {
+    Bus::fake([PlaceFollowerTradeJob::class]);
+    config(['deriv.max_stake' => 0.1]);
+
+    $master = makeMaster();
+    makeFollower($master, ['stake' => 1]);
+
+    CopyTradeJob::dispatchSync($master->id, $masterTrade);
+
+    Bus::assertDispatched(PlaceFollowerTradeJob::class, fn ($job) => $job->stake === 0.35);
 });

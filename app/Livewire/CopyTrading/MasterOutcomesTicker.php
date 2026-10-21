@@ -5,15 +5,25 @@ namespace App\Livewire\CopyTrading;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
+use Livewire\Attributes\Locked;
 use Livewire\Component;
 
 class MasterOutcomesTicker extends Component
 {
+    #[Locked]
     public int $connectionId;
 
     public string $pattern = '';
 
     public bool $patternEnabled = false;
+
+    /** Only the master the current user copies from may be watched. */
+    public function mount(int $connectionId): void
+    {
+        abort_unless(auth()->user()?->copySetting?->master_connection_id === $connectionId, 403);
+
+        $this->connectionId = $connectionId;
+    }
 
     /** Outcomes since the last copy trade fired for the current user (chronological order). */
     #[Computed]

@@ -168,7 +168,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 <div x-show="moreSettings" x-collapse class="pb-4 pt-2">
                     <p class="mb-3 text-xs text-zinc-500">Adjust settings here — they will be saved when you click Apply Reset.</p>
                     <div class="grid grid-cols-2 gap-3">
-                        <flux:input wire:model="stake" label="Stake (USD)" type="number" step="0.01" min="0.35" />
+                        <flux:input wire:model="stake" label="Stake (USD)" type="number" step="0.01" min="0.35" max="{{ config('deriv.max_stake') }}" />
                         <flux:input wire:model="stakeMultiplier" label="Stake Multiplier ×" type="number" step="0.1" min="1" />
                         <flux:input wire:model="takeProfit" label="Take Profit" type="number" min="0" placeholder="—" />
                         <flux:input wire:model="stopLoss" label="Stop Loss" type="number" min="0" placeholder="—" />
@@ -184,6 +184,10 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                     </div>
                 </div>
             </div>
+
+            @if($errors->any())
+                <p class="px-6 pt-3 text-xs text-red-500">Some settings are invalid. Open More Settings to fix them.</p>
+            @endif
 
             {{-- Buttons --}}
             <div class="flex gap-3 border-t border-[#1F2937] px-6 py-4">
@@ -363,6 +367,11 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         </div>
                     </div>
 
+                    @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                    @if(count($this->myAccounts) === 0)
+                        @error('followerAccountId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                    @endif
+
                     <div class="flex gap-2 pt-1">
                         <flux:button wire:click="follow" wire:loading.attr="disabled" wire:target="follow" variant="primary">
                             <span wire:loading.remove wire:target="follow">Start Following</span>
@@ -404,6 +413,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                         <flux:button wire:click="enterOwnAccountMode" variant="filled" size="sm" class="w-full bg-amber-600 hover:bg-amber-500 text-white">
                             Configure Account Trading
                         </flux:button>
+                        @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
                     </div>
                 </div>
             @endif
@@ -490,6 +500,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
             </div>
         </div>
 
+        @error('bot') <p class="text-xs text-red-500">{{ $message }}</p> @enderror
+
         {{-- ===== LISTENER STATUS + MASTER OUTCOMES TICKER + SLAVE PATTERN ===== --}}
         <div class="flex flex-wrap items-start gap-4">
             @if($setting->is_running)
@@ -555,7 +567,6 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                                 <p class="text-xs text-zinc-500">Your own account is the master</p>
                             @else
                                 <p class="mt-1 font-semibold text-white">{{ $setting->masterConnection?->user?->name }}</p>
-                                <p class="text-xs text-zinc-500">{{ $setting->masterConnection?->user?->email }}</p>
                             @endif
                         </div>
                         <flux:button wire:click="$toggle('showMasterList')" size="sm" variant="ghost" icon="arrows-right-left">
@@ -565,6 +576,8 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
                     @if($showMasterList)
                         <div class="mt-4 space-y-3">
+                            @error('selectedMasterId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                            @error('masterAccountId') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
 
                             {{-- Own account option --}}
                             @php $ownConn = auth()->user()->derivConnection; @endphp
@@ -735,7 +748,7 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
 
                         {{-- Stake --}}
                         <div>
-                            <flux:input wire:model="stake" label="Default Stake (USD)" type="number" step="0.01" min="0.35" max="50000" />
+                            <flux:input wire:model="stake" label="Default Stake (USD)" type="number" step="0.01" min="0.35" max="{{ config('deriv.max_stake') }}" />
                             <flux:checkbox wire:model="followMasterStake" label="Follow Master Stake" class="mt-2" />
                             @error('stake') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
                         </div>
@@ -834,6 +847,9 @@ $initialSeconds = ($setting?->is_running && $setting?->session_started_at)
                 </div>
 
             </div>
+
+            @error('followerAccountId') <p class="px-6 pt-3 text-xs text-red-500">{{ $message }}</p> @enderror
+            @error('masterAccountId') <p class="px-6 pt-3 text-xs text-red-500">{{ $message }}</p> @enderror
 
             <div class="flex gap-3 border-t border-[#1F2937] px-6 py-4">
                 <flux:button wire:click="saveSettings" wire:loading.attr="disabled" wire:target="saveSettings" variant="primary">
