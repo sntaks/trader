@@ -66,3 +66,12 @@ test('two factor authentication disabled when confirmation abandoned between req
         'two_factor_recovery_codes' => null,
     ]);
 });
+test('the setup qr code is never colour-inverted, so every authenticator can scan it', function () {
+    $user = User::factory()->create();
+
+    Livewire::actingAs($user)
+        ->test('pages::settings.two-factor-setup-modal', ['requiresConfirmation' => true])
+        ->call('startTwoFactorSetup')
+        ->assertSet('qrCodeSvg', fn (string $svg) => $svg !== '')
+        ->assertDontSee('invert(1)', false);
+});
