@@ -125,3 +125,30 @@ test('saveSettings never stores an own-account choice on a master follow', funct
 
     expect($setting->fresh()->master_account_id)->toBeNull();
 });
+
+test('the settings panel calls the pattern the follower pattern', function () {
+    $setting = settingsTestSetting();
+    $setting->update(['pattern_enabled' => true, 'follower_pattern' => '101']);
+
+    Livewire::actingAs($setting->user)
+        ->test(Dashboard::class)
+        ->set('settingsOpen', true)
+        ->assertSee('Enable Follower Pattern')
+        ->assertSee('Follower Pattern:')
+        ->assertDontSee('Slave')
+        ->assertDontSee('slave');
+});
+
+test('the setup form calls the pattern the follower pattern', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+    $master = DerivConnection::factory()->create(['type' => 'master']);
+
+    Livewire::actingAs($user)
+        ->test(Dashboard::class)
+        ->call('selectMaster', $master->id)
+        ->assertSet('showForm', true)
+        ->assertSee('Enable Follower Pattern')
+        ->assertDontSee('Slave')
+        ->assertDontSee('slave');
+});

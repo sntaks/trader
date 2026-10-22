@@ -105,14 +105,35 @@ class Overview extends Component
     #[Computed]
     public function demoAccounts(): array
     {
-        return array_values(array_filter($this->accounts, fn ($a) => $this->isDemo($a)));
+        return array_values(array_filter($this->accountsWithLiveBalance(), fn ($a) => $this->isDemo($a)));
     }
 
     /** The real accounts from the accounts list. */
     #[Computed]
     public function realAccounts(): array
     {
-        return array_values(array_filter($this->accounts, fn ($a) => ! $this->isDemo($a)));
+        return array_values(array_filter($this->accountsWithLiveBalance(), fn ($a) => ! $this->isDemo($a)));
+    }
+
+    /**
+     * The accounts list with the selected account's cached balance replaced by its live one, when that loaded.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function accountsWithLiveBalance(): array
+    {
+        $liveBalance = $this->balance['balance'] ?? null;
+
+        if ($liveBalance === null) {
+            return $this->accounts;
+        }
+
+        return array_map(
+            fn (array $account) => ($account['account_id'] ?? null) === $this->accountId
+                ? array_merge($account, ['balance' => $liveBalance])
+                : $account,
+            $this->accounts
+        );
     }
 
     protected function resetAccountData(): void

@@ -915,6 +915,29 @@ class Dashboard extends Component
         }
     }
 
+    /**
+     * The user's accounts for the pickers, with the follower account's cached balance replaced by the polled one when it loaded.
+     *
+     * @return list<array<string, mixed>>
+     */
+    #[Computed]
+    public function myAccountsWithLiveBalance(): array
+    {
+        $followerAccountId = $this->setting?->follower_account_id;
+        $liveBalance = $this->currentBalance;
+
+        if ($followerAccountId === null || $liveBalance === null) {
+            return $this->myAccounts;
+        }
+
+        return array_map(
+            fn (array $account) => ($account['account_id'] ?? null) === $followerAccountId
+                ? array_merge($account, ['balance' => $liveBalance])
+                : $account,
+            $this->myAccounts
+        );
+    }
+
     #[Computed]
     public function currentBalance(): ?float
     {
