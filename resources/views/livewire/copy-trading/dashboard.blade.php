@@ -285,7 +285,7 @@ $setting = $this->setting;
                             <flux:label>Master Account <span class="text-amber-400">(trades to copy FROM)</span></flux:label>
                             <flux:text class="mb-3 text-xs text-zinc-500">Choose which of your accounts to copy trades from.</flux:text>
                             <div class="space-y-2">
-                                @foreach($this->myAccounts as $account)
+                                @foreach($this->myAccountsWithLiveBalance as $account)
                                     @php
                                         $isDemo = ($account['is_demo'] ?? false) || ($account['account_type'] ?? '') === 'demo';
                                         $accLabel = ($isDemo ? 'Demo' : 'Real') . ' — ' . $account['account_id'];
@@ -338,7 +338,7 @@ $setting = $this->setting;
                                 @endif
                             </flux:text>
                             <div class="space-y-2">
-                                @foreach($this->myAccounts as $account)
+                                @foreach($this->myAccountsWithLiveBalance as $account)
                                     @php
                                         $isDemo = ($account['is_demo'] ?? false) || ($account['account_type'] ?? '') === 'demo';
                                         $accLabel = ($isDemo ? 'Demo' : 'Real') . ' — ' . $account['account_id'];
@@ -698,7 +698,7 @@ $setting = $this->setting;
                     <flux:label class="mb-2 block">Master Account <span class="text-amber-400">(copy FROM)</span></flux:label>
                     <flux:text class="mb-3 text-xs text-zinc-500">Which account's trades are being copied.</flux:text>
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        @foreach($this->myAccounts as $account)
+                        @foreach($this->myAccountsWithLiveBalance as $account)
                             @php $isDemo = ($account['is_demo'] ?? false) || ($account['account_type'] ?? '') === 'demo'; @endphp
                             <label wire:key="master-set-{{ $account['account_id'] }}"
                                 class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors
@@ -737,7 +737,7 @@ $setting = $this->setting;
                     </flux:label>
                     <flux:text class="mb-3 text-xs text-zinc-500">Choose which account (real or demo) will copy trades.</flux:text>
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        @foreach($this->myAccounts as $account)
+                        @foreach($this->myAccountsWithLiveBalance as $account)
                             @php $isDemo = ($account['is_demo'] ?? false) || ($account['account_type'] ?? '') === 'demo'; @endphp
                             <label wire:key="acc-{{ $account['account_id'] }}"
                                 class="flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors

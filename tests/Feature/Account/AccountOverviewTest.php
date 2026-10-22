@@ -168,3 +168,39 @@ test('overview shows the balance of the selected account', function () {
         ->assertHasNoErrors()
         ->assertSee('2,500.50');
 });
+
+test('the selected account row shows the live balance instead of the cached list balance', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([
+        ['account_id' => 'DOT100', 'currency' => 'USD', 'account_type' => 'demo', 'status' => 'active', 'balance' => 100],
+    ]);
+    $mock->shouldReceive('getBalance')
+        ->andReturn(['balance' => ['balance' => 150, 'currency' => 'USD', 'loginid' => 'DOT100']]);
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(Overview::class)
+        ->assertSee('150.00')
+        ->assertDontSee('100.00');
+});
+
+test('the selected account row falls back to the list balance when the live balance fails', function () {
+    $user = User::factory()->create();
+    DerivConnection::factory()->create(['user_id' => $user->id]);
+
+    $mock = Mockery::mock(DerivApiService::class);
+    $mock->shouldReceive('getAccounts')->andReturn([
+        ['account_id' => 'DOT100', 'currency' => 'USD', 'account_type' => 'demo', 'status' => 'active', 'balance' => 100],
+    ]);
+    $mock->shouldReceive('getBalance')->andThrow(new DerivApiException('Deriv is unreachable'));
+
+    app()->instance(DerivApiService::class, $mock);
+
+    Livewire::actingAs($user)
+        ->test(Overview::class)
+        ->assertSee('100.00');
+});
