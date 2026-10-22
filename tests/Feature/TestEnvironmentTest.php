@@ -22,3 +22,15 @@ test('tests log nowhere', function () {
 
     expect($handlers)->not->toBeEmpty()->each->toBeInstanceOf(NullHandler::class);
 });
+
+test('composer dev migrates first and runs the scheduler', function () {
+    $devScript = json_decode(file_get_contents(base_path('composer.json')), true)['scripts']['dev'];
+
+    $migrateIndex = array_search('@php artisan migrate --no-interaction', $devScript, true);
+    $concurrentlyIndex = array_key_first(array_filter($devScript, fn (string $entry) => str_starts_with($entry, 'npx concurrently')));
+
+    expect($migrateIndex)->toBeInt()
+        ->and($concurrentlyIndex)->toBeInt()
+        ->and($migrateIndex)->toBeLessThan($concurrentlyIndex)
+        ->and($devScript[$concurrentlyIndex])->toContain('php artisan schedule:work');
+});
