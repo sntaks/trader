@@ -98,3 +98,20 @@ test('non-admin cannot mount platform dashboard', function () {
         ->test(PlatformDashboard::class)
         ->assertForbidden();
 });
+
+test('a copy setup without a master is not counted as active', function () {
+    $admin = User::factory()->create(['is_admin' => true]);
+
+    CopySetting::factory()->create(['is_active' => true]);
+    CopySetting::factory()->create(['is_active' => true, 'master_connection_id' => null]);
+    CopySetting::factory()->paused()->create();
+
+    $component = Livewire::actingAs($admin)->test(PlatformDashboard::class);
+
+    expect($component->instance()->copyTradingStats)
+        ->active->toBe(1)
+        ->paused->toBe(1)
+        ->no_master->toBe(1);
+
+    $component->assertSee('1 paused · 1 without a master');
+});

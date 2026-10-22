@@ -67,8 +67,9 @@ class PlatformDashboard extends Component
     public function copyTradingStats(): array
     {
         $total = CopySetting::query()->count();
-        $active = CopySetting::query()->where('is_active', true)->count();
-        $paused = $total - $active;
+        $active = CopySetting::query()->where('is_active', true)->whereNotNull('master_connection_id')->count();
+        $noMaster = CopySetting::query()->where('is_active', true)->whereNull('master_connection_id')->count();
+        $paused = CopySetting::query()->where('is_active', false)->count();
 
         // Master popularity: masters sorted by follower count
         $topMasters = DerivConnection::query()
@@ -83,6 +84,7 @@ class PlatformDashboard extends Component
             'total_setups' => $total,
             'active' => $active,
             'paused' => $paused,
+            'no_master' => $noMaster,
             'top_masters' => $topMasters,
         ];
     }

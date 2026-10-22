@@ -46,7 +46,7 @@
                 </div>
             </div>
             <p class="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">{{ $this->copyTradingStats['active'] }}</p>
-            <p class="mt-1 text-xs text-zinc-400">{{ $this->copyTradingStats['paused'] }} paused</p>
+            <p class="mt-1 text-xs text-zinc-400">{{ $this->copyTradingStats['paused'] }} paused · {{ $this->copyTradingStats['no_master'] }} without a master</p>
         </div>
 
     </div>
