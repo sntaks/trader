@@ -378,7 +378,7 @@
                     'Connect via Deriv OAuth or Personal Access Token',
                     'Encrypted token storage — AES-256, never readable in plain text',
                     'Your funds stay in YOUR Deriv account at all times',
-                    'Slave pattern filter — define the win/loss sequence before copying activates',
+                    'Follower pattern filter — define the win/loss sequence before copying activates',
                     'Live account summaries: balance, P&L, and real-time trade feed',
                     'Take profit and stop loss — bot pauses automatically when limits are hit',
                     'Pause or stop copying at any time, instantly from your dashboard',
@@ -415,7 +415,7 @@
                     'soon'     => false,
                 ],
                 [
-                    'title'    => 'Slave Pattern Filter',
+                    'title'    => 'Follower Pattern Filter',
                     'desc'     => 'Define a custom win/loss sequence — e.g. "111" for three consecutive wins — that must match before copying activates on your real account. Keeps you out of cold streaks automatically.',
                     'icon'     => 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
                     'soon'     => false,
@@ -513,7 +513,7 @@
                 <div class="flex-1">
                     <h3 class="text-sm font-bold text-white mb-2">Configure Accounts & Settings</h3>
                     <p class="text-sm text-zinc-500 leading-relaxed mb-3">
-                        Master Account = Demo · Follower Account = Real. Set your Slave Pattern, Stake, Take Profit, and Stop Loss — all adjustable at any time.
+                        Master Account = Demo · Follower Account = Real. Set your Follower Pattern, Stake, Take Profit, and Stop Loss — all adjustable at any time.
                     </p>
                     <div class="grid sm:grid-cols-2 gap-2">
                         <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#111827] border border-[#1F2937]">
@@ -534,7 +534,7 @@
                 <div>
                     <h3 class="text-sm font-bold text-white mb-1">Trades Copy Automatically</h3>
                     <p class="text-sm text-zinc-500 leading-relaxed">
-                        Trades copy in real time following your Slave Pattern. Your balance and P&L update instantly on the dashboard.
+                        Trades copy in real time following your Follower Pattern. Your balance and P&L update instantly on the dashboard.
                     </p>
                 </div>
             </div>
@@ -589,8 +589,8 @@
                     'a' => "In this platform, Master Account = Demo Account and Follower Account = Real Account. Your demo account acts as the signal source — every trade it places is mirrored to your real account automatically. For testing, you can set both Master and Follower to the same demo account. For live trading, set the Master to your demo account and the Follower to your real account.",
                 ],
                 [
-                    'q' => 'What is the Slave Pattern and how do I set it?',
-                    'a' => "The Slave Pattern is a win/loss filter — e.g. '111' means three consecutive wins must occur on the master (demo) account before copying activates on the follower (real) account. This keeps your real account out of cold streaks. You set it during setup and can change it at any time from your dashboard.",
+                    'q' => 'What is the Follower Pattern and how do I set it?',
+                    'a' => "The Follower Pattern is a win/loss filter — e.g. '111' means three consecutive wins must occur on the master (demo) account before copying activates on the follower (real) account. This keeps your real account out of cold streaks. You set it during setup and can change it at any time from your dashboard.",
                 ],
                 [
                     'q' => 'How does the real-time copying work?',

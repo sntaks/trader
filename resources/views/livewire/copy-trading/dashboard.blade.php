@@ -377,7 +377,7 @@ $setting = $this->setting;
                     <div>
                         <flux:input
                             wire:model.live="followerPattern"
-                            label="Slave / Follower Pattern"
+                            label="Follower Pattern"
                             placeholder="e.g. 111 or 101"
                             :disabled="!$patternEnabled"
                             description="Use 1 for Win, 0 for Loss. Copying starts when master's last outcomes match this sequence."
@@ -558,7 +558,7 @@ $setting = $this->setting;
 
         @error('bot') <p class="text-xs text-red-500">{{ $message }}</p> @enderror
 
-        {{-- ===== LISTENER STATUS + MASTER OUTCOMES TICKER + SLAVE PATTERN ===== --}}
+        {{-- ===== LISTENER STATUS + MASTER OUTCOMES TICKER + FOLLOWER PATTERN ===== --}}
         <div class="flex flex-wrap items-start gap-4">
             @if($setting->is_running)
                 <div @class([
@@ -576,7 +576,7 @@ $setting = $this->setting;
                 </div>
             @endif
 
-            {{-- Master outcomes + slave pattern --}}
+            {{-- Master outcomes + follower pattern --}}
             <div class="flex-1 min-w-0 rounded-xl border border-[#1F2937] bg-[#0B1220] px-4 py-3 space-y-2">
                 @if($setting->master_connection_id)
                     @livewire('copy-trading.master-outcomes-ticker', [
@@ -586,10 +586,10 @@ $setting = $this->setting;
                     ], key('ticker-'.$setting->master_connection_id))
                 @endif
 
-                {{-- Slave pattern display --}}
+                {{-- Follower pattern display --}}
                 @if($setting->pattern_enabled && $setting->follower_pattern)
                     <div class="flex flex-wrap items-center gap-1.5 border-t border-[#1F2937] pt-2">
-                        <span class="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Slave Pattern:</span>
+                        <span class="mr-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Follower Pattern:</span>
                         @foreach(str_split($setting->follower_pattern) as $bit)
                             <span @class([
                                 'inline-flex h-6 w-6 items-center justify-center rounded font-mono text-xs font-bold',
@@ -764,9 +764,9 @@ $setting = $this->setting;
                 </div>
                 @endif
 
-                {{-- Slave/Follower Pattern --}}
+                {{-- Follower Pattern --}}
                 <div class="col-span-full rounded-lg border border-[#1E45FC]/30 bg-[#1E45FC]/5 p-4">
-                    <flux:checkbox wire:model.live="patternEnabled" label="Enable Slave Pattern" class="mb-3" />
+                    <flux:checkbox wire:model.live="patternEnabled" label="Enable Follower Pattern" class="mb-3" />
                     <flux:input
                         wire:model.live="followerPattern"
                         label="Follower Pattern (1=Win, 0=Loss)"
